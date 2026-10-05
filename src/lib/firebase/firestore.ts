@@ -286,7 +286,26 @@ export async function deleteClass(classId: string): Promise<void> {
   }
 }
 
-// ================= ASSIGNMENTS =================
+
+// ================= CLASS ROSTER =================
+
+export async function getClassRoster(classId: string): Promise<UserProfile[]> {
+  const klass = await getClass(classId);
+  if (!klass) throw new Error("Class not found.");
+  const ids = [...new Set(klass.studentIds || [])];
+  if (!ids.length) return [];
+  const profiles = await Promise.all(ids.map((id) => getUserProfile(id)));
+  return profiles.filter((p): p is UserProfile => Boolean(p));
+}
+
+export function exportClassRosterCsv(roster: UserProfile[]): string {
+  const header = ["Full Name", "Roll No", "ER No", "SR No"];
+  const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  return [header, ...roster.map((u) => [u.name, u.rollNo, u.erNo, u.srNo])]
+    .map((row) => row.map(escape).join(","))
+    .join("\n");
+}
+\n// ================= ASSIGNMENTS =================
 
 export async function getAssignmentsByClass(classId: string): Promise<Assignment[]> {
   const path = "assignments";
