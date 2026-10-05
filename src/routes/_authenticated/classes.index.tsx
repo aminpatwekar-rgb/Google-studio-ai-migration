@@ -68,8 +68,8 @@ function Classes() {
     if (!joinOpen || isTeacher) return;
     setStudentName(profile?.full_name ?? "");
     setRollNo(profile?.roll_no ?? profile?.rollNo ?? "");
-    setErNo(profile?.erNo ?? "");
-    setSrNo(profile?.srNo ?? "");
+    setErNo(profile?.er_no ?? "");
+    setSrNo(profile?.sr_no ?? "");
   }, [joinOpen, isTeacher, profile]);
 
   const classes = useQuery({
