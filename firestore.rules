@@ -152,6 +152,75 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ================= ASSIGNMENT ATTACHMENTS =================
+    match /assignments/{assignmentId}/attachments/{attachmentId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId) ||
+        isEnrolledInClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId)
+      );
+      allow create, update, delete: if isSignedIn() &&
+        (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
+    }
+
+    // ================= RUBRICS =================
+    match /rubrics/{rubricId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.owner_id == request.auth.uid
+      );
+      allow create: if isSignedIn() && (
+        isAdmin() || incoming().owner_id == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin() || resource.data.owner_id == request.auth.uid
+      );
+    }
+
+    // ================= CLASS RESOURCES =================
+    match /classes/{classId}/resources/{resourceId} {
+      allow read: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
+      );
+      allow create, update, delete: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId)
+      );
+    }
+
+    // ================= ANNOUNCEMENTS =================
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        isAdmin() || incoming().author_id == request.auth.uid
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin() || resource.data.author_id == request.auth.uid
+      );
+    }
+
+    // ================= CLASS DISCUSSION =================
+    match /classes/{classId}/discussions/{discussionId} {
+      allow read: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
+      );
+      allow create: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
+      );
+      allow update, delete: if isSignedIn() && (
+        isAdmin() || resource.data.author_id == request.auth.uid || isTeacherForClass(classId)
+      );
+    }
+
+    // ================= ATTENDANCE =================
+    match /classes/{classId}/attendance/{dateId} {
+      allow read: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
+      );
+      allow write: if isSignedIn() && (
+        isAdmin() || isTeacherForClass(classId)
+      );
+    }
+
     // ================= ACHIEVEMENTS =================
     match /achievements/{achievementId} {
       allow read: if isSignedIn();
