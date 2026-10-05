@@ -1,242 +1,115 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
 
-    // 1. Default-deny catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
+    function isSignedIn() { return request.auth != null; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'aminpatwekar@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
     function isTeacherForClass(classId) {
       return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
         get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == request.auth.uid;
     }
-
     function isEnrolledInClass(classId) {
       return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
         request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.studentIds;
     }
 
-    // ================= USERS =================
     match /users/{uid} {
       allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
-      allow create: if isSignedIn() && request.auth.uid == uid &&
-        incoming().role in ['admin', 'teacher', 'student'];
-      // Students and teachers cannot change their own role; only admins can change role
+      // Profile creation is performed by the trusted Firebase Admin server function.
+      allow create: if false;
       allow update: if isSignedIn() && (
         isAdmin() ||
         (request.auth.uid == uid && incoming().role == existing().role)
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() && uid != request.auth.uid;
 
-      // User earned achievements
       match /achievements/{userAchievementId} {
-        allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
-        allow write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+        allow read, write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
       }
     }
 
-    // ================= CLASSES =================
     match /classes/{classId} {
-      allow get: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.teacherId == request.auth.uid ||
-        request.auth.uid in resource.data.studentIds
-      );
+      allow get: if isSignedIn() && (isAdmin() || resource.data.teacherId == request.auth.uid || request.auth.uid in resource.data.studentIds);
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && (
-        incoming().teacherId == request.auth.uid || isAdmin()
-      );
+      allow create: if isSignedIn() && (incoming().teacherId == request.auth.uid || isAdmin());
       allow update: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.teacherId == request.auth.uid ||
-        // Allow student to append themselves to studentIds when joining with code
-        (incoming().diff(existing()).affectedKeys().hasOnly(['studentIds']) &&
-         request.auth.uid in incoming().studentIds)
+        isAdmin() || resource.data.teacherId == request.auth.uid ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['studentIds']) && request.auth.uid in incoming().studentIds)
       );
-      allow delete: if isSignedIn() && (
-        isAdmin() || resource.data.teacherId == request.auth.uid
-      );
+      allow delete: if isSignedIn() && (isAdmin() || resource.data.teacherId == request.auth.uid);
     }
 
-    // ================= ASSIGNMENTS =================
     match /assignments/{assignmentId} {
-      allow get: if isSignedIn() && (
-        isAdmin() ||
-        isTeacherForClass(resource.data.classId) ||
-        isEnrolledInClass(resource.data.classId)
-      );
+      allow get: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId) || isEnrolledInClass(resource.data.classId));
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && (
-        isTeacherForClass(incoming().classId) || isAdmin()
-      );
-      allow update, delete: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(resource.data.classId)
-      );
-    }
-
-    // ================= QUIZZES =================
-    match /quizzes/{quizId} {
-      allow get: if isSignedIn() && (
-        isAdmin() ||
-        isTeacherForClass(resource.data.classId) ||
-        isEnrolledInClass(resource.data.classId)
-      );
-      allow list: if isSignedIn();
-      allow create: if isSignedIn() && (
-        isTeacherForClass(incoming().classId) || isAdmin()
-      );
-      allow update, delete: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(resource.data.classId)
-      );
-
-      // Quiz Answer Key - ONLY teacher of the class or admin can read or write!
-      // Students CANNOT read this before or during quiz taking.
-      match /keys/{keyId} {
-        allow read, write: if isSignedIn() && (
-          isAdmin() ||
-          isTeacherForClass(get(/databases/$(database)/documents/quizzes/$(quizId)).data.classId)
-        );
+      allow create: if isSignedIn() && (isTeacherForClass(incoming().classId) || isAdmin());
+      allow update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId));
+      match /attachments/{attachmentId} {
+        allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId) || isEnrolledInClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
+        allow create, update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
       }
     }
 
-    // ================= SUBMISSIONS =================
+    match /quizzes/{quizId} {
+      allow get, list: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId) || isEnrolledInClass(resource.data.classId));
+      allow create: if isSignedIn() && (isTeacherForClass(incoming().classId) || isAdmin());
+      allow update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId));
+      match /keys/{keyId} {
+        allow read, write: if isSignedIn() && (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/quizzes/$(quizId)).data.classId));
+      }
+    }
+
     match /submissions/{submissionId} {
-      allow get: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.studentId == request.auth.uid ||
-        isTeacherForClass(resource.data.classId)
-      );
-      allow list: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.studentId == request.auth.uid ||
-        isTeacherForClass(resource.data.classId)
-      );
-      // Student can create their own submission, never with a pre-set score
-      allow create: if isSignedIn() &&
-        incoming().studentId == request.auth.uid &&
-        incoming().status == 'submitted' &&
-        incoming().score == null;
-      // Students can NEVER update or delete. Only teacher or admin can grade.
-      allow update: if isSignedIn() && (
-        isAdmin() ||
-        (isTeacherForClass(resource.data.classId) &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'score', 'feedback', 'gradedBy', 'gradedAt']))
-      );
+      allow get, list: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isTeacherForClass(resource.data.classId));
+      allow create: if isSignedIn() && incoming().studentId == request.auth.uid && incoming().status == 'submitted' && incoming().score == null;
+      allow update: if isSignedIn() && (isAdmin() || (isTeacherForClass(resource.data.classId) && incoming().diff(existing()).affectedKeys().hasOnly(['status','score','feedback','gradedBy','gradedAt'])));
       allow delete: if isAdmin();
     }
 
-    // ================= ASSIGNMENT ATTACHMENTS =================
-    match /assignments/{assignmentId}/attachments/{attachmentId} {
-      allow read: if isSignedIn() && (
-        isAdmin() ||
-        isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId) ||
-        isEnrolledInClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId)
-      );
-      allow create, update, delete: if isSignedIn() &&
-        (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
-    }
-
-    // ================= RUBRICS =================
     match /rubrics/{rubricId} {
-      allow read: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.owner_id == request.auth.uid
-      );
-      allow create: if isSignedIn() && (
-        isAdmin() || incoming().owner_id == request.auth.uid
-      );
-      allow update, delete: if isSignedIn() && (
-        isAdmin() || resource.data.owner_id == request.auth.uid
-      );
+      allow read: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
+      allow create: if isSignedIn() && (isAdmin() || incoming().owner_id == request.auth.uid);
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
     }
 
-    // ================= CLASS RESOURCES =================
     match /classes/{classId}/resources/{resourceId} {
-      allow read: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
-      );
-      allow create, update, delete: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId)
-      );
+      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow create, update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(classId));
     }
-
-    // ================= ANNOUNCEMENTS =================
     match /announcements/{announcementId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && (
-        isAdmin() || incoming().author_id == request.auth.uid
-      );
-      allow update, delete: if isSignedIn() && (
-        isAdmin() || resource.data.author_id == request.auth.uid
-      );
+      allow create: if isSignedIn() && (isAdmin() || incoming().author_id == request.auth.uid);
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.author_id == request.auth.uid);
     }
-
-    // ================= CLASS DISCUSSION =================
     match /classes/{classId}/discussions/{discussionId} {
-      allow read: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
-      );
-      allow create: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
-      );
-      allow update, delete: if isSignedIn() && (
-        isAdmin() || resource.data.author_id == request.auth.uid || isTeacherForClass(classId)
-      );
+      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow create: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.author_id == request.auth.uid || isTeacherForClass(classId));
     }
-
-    // ================= ATTENDANCE =================
     match /classes/{classId}/attendance/{dateId} {
-      allow read: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId)
-      );
-      allow write: if isSignedIn() && (
-        isAdmin() || isTeacherForClass(classId)
-      );
+      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow write: if isSignedIn() && (isAdmin() || isTeacherForClass(classId));
     }
-
-    // ================= ACHIEVEMENTS =================
     match /achievements/{achievementId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
-
-    // ================= LEADERBOARD =================
     match /leaderboard/{userId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
     }
-
-    // ================= PAYMENTS =================
     match /payments/{paymentId} {
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      // Payments can only be written by trusted server backend
       allow write: if false;
     }
   }
