@@ -1,5 +1,17 @@
 export type AppRole = "admin" | "teacher" | "student";
 
+export interface OnyxNotification {
+  id: string;
+  userId: string;
+  type: "announcement" | "assignment" | "grade" | "quiz" | "system";
+  title: string;
+  body: string;
+  classId?: string;
+  refId?: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
