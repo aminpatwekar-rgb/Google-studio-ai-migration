@@ -26,6 +26,7 @@ import type {
   LeaderboardEntry,
   PaymentRecord,
   AppRole,
+  OnyxNotification,
 } from "./models";
 
 /** Recursively removes undefined properties so Firestore never throws `Unsupported field value: undefined` */
