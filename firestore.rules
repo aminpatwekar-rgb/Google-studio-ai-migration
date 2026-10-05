@@ -15,7 +15,8 @@ service cloud.firestore {
 
     function isTeacherForClass(classId) {
       return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
-        get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == request.auth.uid;
+        (get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == request.auth.uid ||
+         request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.teacherIds);
     }
     function isEnrolledInClass(classId) {
       return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
@@ -41,9 +42,10 @@ service cloud.firestore {
     match /classes/{classId} {
       allow get: if isSignedIn() && (isAdmin() || resource.data.teacherId == request.auth.uid || request.auth.uid in resource.data.studentIds);
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && (incoming().teacherId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && (incoming().teacherId == request.auth.uid || isAdmin()) &&
+        (incoming().teacherIds == null || request.auth.uid in incoming().teacherIds);
       allow update: if isSignedIn() && (
-        isAdmin() || resource.data.teacherId == request.auth.uid ||
+        isAdmin() || isTeacherForClass(classId) ||
         (incoming().diff(existing()).affectedKeys().hasOnly(['studentIds']) && request.auth.uid in incoming().studentIds)
       );
       allow delete: if isSignedIn() && (isAdmin() || resource.data.teacherId == request.auth.uid);
