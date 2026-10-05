@@ -171,12 +171,12 @@ function Classes() {
                   {effectiveRole === "student" && <div className="space-y-1.5">
                     <Label htmlFor="studentName">Full Name</Label>
                     <Input id="studentName" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Your full name" />
-                  </div>
+                  </div>}
                   {effectiveRole === "student" && <div className="grid gap-3 sm:grid-cols-3">
                     <div className="space-y-1.5"><Label htmlFor="rollNo">Roll No</Label><Input id="rollNo" value={rollNo} onChange={(e) => setRollNo(e.target.value)} placeholder="Optional" /></div>
                     <div className="space-y-1.5"><Label htmlFor="erNo">ER No</Label><Input id="erNo" value={erNo} onChange={(e) => setErNo(e.target.value)} placeholder="Optional" /></div>
                     <div className="space-y-1.5"><Label htmlFor="srNo">SR No</Label><Input id="srNo" value={srNo} onChange={(e) => setSrNo(e.target.value)} placeholder="Optional" /></div>
-                  </div>
+                  </div>}
                   {effectiveRole === "student" && <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
                     <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
                     <span>Enter at least one academic identifier. Classmates see your name and identifier, not your email.</span>
