@@ -12,6 +12,7 @@ import {
   ChevronRight,
   UserMinus,
   Calendar,
+  Download,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
@@ -26,6 +27,8 @@ import {
   getUserProfile,
   updateClass,
   removeCoTeacher,
+  getClassRoster,
+  exportClassRosterCsv,
 } from "@/lib/firebase/firestore";
 import type { Assignment, Quiz, UserProfile } from "@/lib/firebase/models";
 import { formatDue } from "@/lib/assignments";
@@ -79,16 +82,7 @@ function ClassDetail() {
   const roster = useQuery({
     queryKey: ["class-roster", classId, klass.data?.studentIds],
     enabled: Boolean(klass.data?.studentIds?.length),
-    queryFn: async () => {
-      const studentIds = klass.data?.studentIds || [];
-      const profiles: UserProfile[] = [];
-      for (const sid of studentIds) {
-        const p = await getUserProfile(sid);
-        if (p) profiles.push(p);
-        else profiles.push({ id: sid, name: "Student", email: null, role: "student", classIds: [], createdAt: "" });
-      }
-      return profiles;
-    },
+    queryFn: () => getClassRoster(classId),
   });
 
   const removeStudent = useMutation({
@@ -211,6 +205,26 @@ function ClassDetail() {
           <TabsTrigger value="roster" className="gap-1.5">
             <Users className="size-3.5" /> Roster ({(c.studentIds || []).length})
           </TabsTrigger>
+          {isTeacher && isOwner && (roster.data?.length || 0) > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto gap-1.5"
+              onClick={() => {
+                const csv = exportClassRosterCsv(roster.data || []);
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${c.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "class"}-roster.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast.success("Roster CSV exported");
+              }}
+            >
+              <Download className="size-3.5" /> Export CSV
+            </Button>
+          )}
         </TabsList>
 
         <TabsContent value="assignments" className="space-y-3">
