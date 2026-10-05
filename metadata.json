@@ -1,0 +1,6 @@
+{
+  "name": "Smart Assignment Hub",
+  "description": "Handwriting-first assignment platform for schools and colleges with teacher, student, and admin roles.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,203 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing authentication details, roles, and class memberships",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 255 },
+        "role": { "type": "string", "enum": ["admin", "teacher", "student"] },
+        "classIds": { "type": "array" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "plan": { "type": "string", "maxLength": 64 },
+        "avatarUrl": { "type": "string", "maxLength": 1024 },
+        "institution": { "type": "string", "maxLength": 255 },
+        "rollNo": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "role", "classIds", "createdAt"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Class room managed by a teacher with enrolled students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "teacherName": { "type": "string", "maxLength": 120 },
+        "studentIds": { "type": "array" },
+        "joinCode": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "subject": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "name", "teacherId", "studentIds", "joinCode", "createdAt"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Assignment given to a class",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "classId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 10000 },
+        "dueDate": { "type": "string", "maxLength": 64 },
+        "maxPoints": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "classId", "title", "dueDate", "maxPoints", "createdBy", "createdAt"]
+    },
+    "Quiz": {
+      "title": "Quiz",
+      "description": "Quiz questions and metadata without correct answers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "classId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "questions": { "type": "array" },
+        "timeLimit": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "classId", "title", "questions", "timeLimit", "createdBy", "createdAt"]
+    },
+    "QuizAnswerKey": {
+      "title": "QuizAnswerKey",
+      "description": "Teacher-only answer key stored in a protected subcollection",
+      "type": "object",
+      "properties": {
+        "answers": { "type": "object" },
+        "quizId": { "type": "string", "maxLength": 128 },
+        "createdBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["answers", "quizId", "createdBy"]
+    },
+    "Submission": {
+      "title": "Submission",
+      "description": "Student work for an assignment or quiz with grading info",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["assignment", "quiz"] },
+        "refId": { "type": "string", "maxLength": 128 },
+        "classId": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 120 },
+        "studentEmail": { "type": "string", "maxLength": 255 },
+        "answers": { "type": "object" },
+        "submittedAt": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["submitted", "graded"] },
+        "score": { "type": "number" },
+        "feedback": { "type": "string", "maxLength": 5000 },
+        "gradedBy": { "type": "string", "maxLength": 128 },
+        "gradedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "type", "refId", "classId", "studentId", "submittedAt", "status"]
+    },
+    "Achievement": {
+      "title": "Achievement",
+      "description": "Badge catalog item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "icon": { "type": "string", "maxLength": 64 },
+        "points": { "type": "number" }
+      },
+      "required": ["id", "title", "description", "icon", "points"]
+    },
+    "UserAchievement": {
+      "title": "UserAchievement",
+      "description": "Achievement earned by a specific user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "achievementId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "icon": { "type": "string", "maxLength": 64 },
+        "points": { "type": "number" },
+        "earnedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "achievementId", "title", "points", "earnedAt"]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Aggregated user score and rank entry",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "score": { "type": "number" },
+        "totalSubmissions": { "type": "number" },
+        "rank": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["userId", "userName", "score", "totalSubmissions", "updatedAt"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Server-verified payment record for Razorpay subscriptions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "razorpayOrderId": { "type": "string", "maxLength": 128 },
+        "razorpayPaymentId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "plan": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["created", "authorized", "captured", "failed"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "razorpayOrderId", "amount", "plan", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles with roles and class enrollment"
+    },
+    "/classes/{classId}": {
+      "schema": "Class",
+      "description": "Classes created by teachers with enrolled students"
+    },
+    "/assignments/{assignmentId}": {
+      "schema": "Assignment",
+      "description": "Course assignments created by teachers"
+    },
+    "/quizzes/{quizId}": {
+      "schema": "Quiz",
+      "description": "Quizzes with questions without answers"
+    },
+    "/quizzes/{quizId}/keys/answerKey": {
+      "schema": "QuizAnswerKey",
+      "description": "Teacher-only answer keys"
+    },
+    "/submissions/{submissionId}": {
+      "schema": "Submission",
+      "description": "Student submissions and teacher grades"
+    },
+    "/achievements/{achievementId}": {
+      "schema": "Achievement",
+      "description": "Catalog of badge achievements"
+    },
+    "/users/{uid}/achievements/{userAchievementId}": {
+      "schema": "UserAchievement",
+      "description": "User earned achievements"
+    },
+    "/leaderboard/{userId}": {
+      "schema": "LeaderboardEntry",
+      "description": "Points leaderboard"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Server-written Razorpay payments"
+    }
+  }
+}
