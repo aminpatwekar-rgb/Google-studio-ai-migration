@@ -20,6 +20,8 @@ export interface ClassRoom {
   name: string;
   teacherId: string;
   teacherName?: string;
+  teacherIds?: string[];
+  teacherNames?: Record<string, string>;
   studentIds: string[];
   joinCode: string;
   createdAt: string;

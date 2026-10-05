@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { toast } from "sonner";
-import { ChevronRight, Copy, Plus, Users } from "lucide-react";
+import { ChevronRight, Copy, Plus, Users, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
 import { SPRING_PRESS, getPressProps } from "@/lib/motionPresets";
@@ -59,13 +59,17 @@ function Classes() {
   const [code, setCode] = useState("");
   const [studentName, setStudentName] = useState("");
   const [rollNo, setRollNo] = useState("");
+  const [erNo, setErNo] = useState("");
+  const [srNo, setSrNo] = useState("");
 
   const isTeacher = effectiveRole === "teacher" || effectiveRole === "admin";
 
   useEffect(() => {
     if (!joinOpen || isTeacher) return;
     setStudentName(profile?.full_name ?? "");
-    setRollNo(profile?.roll_no ?? "");
+    setRollNo(profile?.roll_no ?? profile?.rollNo ?? "");
+    setErNo(profile?.er_no ?? "");
+    setSrNo(profile?.sr_no ?? "");
   }, [joinOpen, isTeacher, profile]);
 
   const classes = useQuery({
@@ -111,7 +115,11 @@ function Classes() {
   const join = useMutation({
     mutationFn: async () => {
       if (!code.trim()) throw new Error("Enter the join code");
-      return await joinClassByCode(user!.id, code.trim());
+      if (effectiveRole === "student") {
+        if (!studentName.trim()) throw new Error("Full name is required");
+        if (!rollNo.trim() && !erNo.trim() && !srNo.trim()) throw new Error("Enter at least one Roll No, ER No, or SR No.");
+      }
+      return await joinClassByCode(user!.id, code.trim(), { fullName: studentName, rollNo, erNo, srNo }, effectiveRole);
     },
     onSuccess: (res) => {
       toast.success(`Joined ${res.name}!`);
@@ -137,7 +145,7 @@ function Classes() {
         </div>
 
         <div className="flex items-center gap-2">
-          {!isTeacher && (
+          {(effectiveRole === "student" || effectiveRole === "teacher" || effectiveRole === "admin") && (
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-1.5 press">
@@ -160,6 +168,19 @@ function Classes() {
                       maxLength={12}
                     />
                   </div>
+                  {effectiveRole === "student" && <div className="space-y-1.5">
+                    <Label htmlFor="studentName">Full Name</Label>
+                    <Input id="studentName" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Your full name" />
+                  </div>}
+                  {effectiveRole === "student" && <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="space-y-1.5"><Label htmlFor="rollNo">Roll No</Label><Input id="rollNo" value={rollNo} onChange={(e) => setRollNo(e.target.value)} placeholder="Optional" /></div>
+                    <div className="space-y-1.5"><Label htmlFor="erNo">ER No</Label><Input id="erNo" value={erNo} onChange={(e) => setErNo(e.target.value)} placeholder="Optional" /></div>
+                    <div className="space-y-1.5"><Label htmlFor="srNo">SR No</Label><Input id="srNo" value={srNo} onChange={(e) => setSrNo(e.target.value)} placeholder="Optional" /></div>
+                  </div>}
+                  {effectiveRole === "student" && <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <span>Enter at least one academic identifier. Classmates see your name and identifier, not your email.</span>
+                  </div>}
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setJoinOpen(false)}>

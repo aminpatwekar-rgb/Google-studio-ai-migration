@@ -25,6 +25,7 @@ import {
   getQuizzesByClass,
   getUserProfile,
   updateClass,
+  removeCoTeacher,
 } from "@/lib/firebase/firestore";
 import type { Assignment, Quiz, UserProfile } from "@/lib/firebase/models";
 import { formatDue } from "@/lib/assignments";
@@ -107,6 +108,10 @@ function ClassDetail() {
   const leaveClass = useMutation({
     mutationFn: async () => {
       if (!klass.data || !user) return;
+      if (isCoTeacher) {
+        await removeCoTeacher(classId, user.id);
+        return;
+      }
       const updatedStudents = (klass.data.studentIds || []).filter((id) => id !== user.id);
       await updateClass(classId, { studentIds: updatedStudents });
     },
@@ -132,7 +137,9 @@ function ClassDetail() {
   }
 
   const c = klass.data;
+  const teacherIds = c.teacherIds || [c.teacherId];
   const isOwner = c.teacherId === user?.id || effectiveRole === "admin";
+  const isCoTeacher = isTeacher && teacherIds.includes(user?.id || "") && !isOwner;
 
   return (
     <div className="space-y-6">
@@ -173,6 +180,10 @@ function ClassDetail() {
             <Button size="sm" onClick={() => setAssignmentOpen(true)} className="gap-1.5 press">
               <Plus className="size-4" /> New Assignment
             </Button>
+          )}
+
+          {isCoTeacher && (
+            <Button size="sm" variant="outline" onClick={() => leaveClass.mutate()} disabled={leaveClass.isPending} className="text-destructive hover:bg-destructive/10">Leave as Co-teacher</Button>
           )}
 
           {!isTeacher && (
@@ -294,6 +305,7 @@ function ClassDetail() {
               <Users className="mx-auto size-8 text-muted-foreground/60" />
               <p className="mt-2 text-sm font-semibold">No students have joined yet</p>
               <p className="text-xs text-muted-foreground mt-1">
+                {teacherIds.length > 1 && <span className="mr-1">{teacherIds.length} teachers ·</span>}
                 Share join code <span className="font-mono font-bold text-foreground">{c.joinCode}</span> with students.
               </p>
             </div>

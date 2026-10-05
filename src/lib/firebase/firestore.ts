@@ -131,9 +131,15 @@ export async function getClass(classId: string): Promise<ClassRoom | null> {
 export async function getTeacherClasses(teacherId: string): Promise<ClassRoom[]> {
   const path = "classes";
   try {
-    const q = query(collection(db, "classes"), where("teacherId", "==", teacherId));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClassRoom, "id">) }));
+    const [ownerSnap, memberSnap] = await Promise.all([
+      getDocs(query(collection(db, "classes"), where("teacherId", "==", teacherId))),
+      getDocs(query(collection(db, "classes"), where("teacherIds", "array-contains", teacherId))),
+    ]);
+    const byId = new Map<string, ClassRoom>();
+    for (const snap of [ownerSnap, memberSnap]) {
+      for (const d of snap.docs) byId.set(d.id, { id: d.id, ...(d.data() as Omit<ClassRoom, "id">) });
+    }
+    return Array.from(byId.values());
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }
@@ -170,6 +176,8 @@ export async function createClass(data: Omit<ClassRoom, "id">): Promise<string> 
       name: data.name || "Untitled Class",
       teacherId: data.teacherId,
       teacherName: data.teacherName || "Teacher",
+      teacherIds: data.teacherIds || [data.teacherId],
+      teacherNames: data.teacherNames || { [data.teacherId]: data.teacherName || "Teacher" },
       studentIds: data.studentIds || [],
       joinCode: data.joinCode || Math.random().toString(36).substring(2, 8).toUpperCase(),
       createdAt: data.createdAt || new Date().toISOString(),
@@ -183,7 +191,7 @@ export async function createClass(data: Omit<ClassRoom, "id">): Promise<string> 
   }
 }
 
-export async function joinClassByCode(studentId: string, joinCode: string): Promise<ClassRoom> {
+export async function joinClassByCode(userId: string, joinCode: string, profile?: { fullName?: string; rollNo?: string; erNo?: string; srNo?: string }, role: "student" | "teacher" | "admin" = "student"): Promise<ClassRoom> {
   const path = "classes";
   try {
     const q = query(
@@ -199,20 +207,59 @@ export async function joinClassByCode(studentId: string, joinCode: string): Prom
       throw new Error("Class could not be loaded.");
     }
     const classData = classDoc.data() as ClassRoom;
-    if (classData.studentIds?.includes(studentId)) {
-      return { id: classDoc.id, ...classData };
+    const teacherIds = classData.teacherIds || [classData.teacherId];
+    if (teacherIds.includes(userId)) throw new Error("Class owners and co-teachers cannot join their own class.");
+    if (role === "student") {
+      if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim()) throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
+      if (classData.studentIds?.includes(userId)) return { id: classDoc.id, ...classData };
+      await updateDoc(doc(db, "classes", classDoc.id), { studentIds: arrayUnion(userId) });
+    } else {
+      await updateDoc(doc(db, "classes", classDoc.id), {
+        teacherIds: arrayUnion(userId),
+        [`teacherNames.${userId}`]: profile?.fullName?.trim()?.slice(0, 120) || "Teacher",
+      });
     }
-    await updateDoc(doc(db, "classes", classDoc.id), {
-      studentIds: arrayUnion(studentId),
-    });
-    await updateDoc(doc(db, "users", studentId), {
+    await updateDoc(doc(db, "users", userId), {
       classIds: arrayUnion(classDoc.id),
+      ...(profile?.fullName?.trim() ? { name: profile.fullName.trim().slice(0, 120) } : {}),
+      ...(profile?.rollNo?.trim() ? { rollNo: profile.rollNo.trim().slice(0, 64) } : {}),
+      ...(profile?.erNo?.trim() ? { erNo: profile.erNo.trim().slice(0, 64) } : {}),
+      ...(profile?.srNo?.trim() ? { srNo: profile.srNo.trim().slice(0, 64) } : {}),
     });
     return {
       id: classDoc.id,
       ...classData,
-      studentIds: [...(classData.studentIds || []), studentId],
+      studentIds: role === "student" ? [...(classData.studentIds || []), userId] : classData.studentIds || [],
+      teacherIds: role === "student" ? teacherIds : [...new Set([...teacherIds, userId])],
     };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function addCoTeacher(classId: string, teacherId: string, teacherName: string): Promise<void> {
+  const path = `classes/${classId}`;
+  try {
+    await updateDoc(doc(db, "classes", classId), {
+      teacherIds: arrayUnion(teacherId),
+      [`teacherNames.${teacherId}`]: teacherName.trim().slice(0, 120),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function removeCoTeacher(classId: string, teacherId: string): Promise<void> {
+  const path = `classes/${classId}`;
+  try {
+    const snap = await getDoc(doc(db, "classes", classId));
+    if (!snap.exists()) throw new Error("Class not found");
+    const data = snap.data() as ClassRoom;
+    if (data.teacherId === teacherId) throw new Error("The class owner cannot leave the class.");
+    const teacherIds = (data.teacherIds || [data.teacherId]).filter((id) => id !== teacherId);
+    const teacherNames = { ...(data.teacherNames || {}) };
+    delete teacherNames[teacherId];
+    await updateDoc(doc(db, "classes", classId), { teacherIds, teacherNames });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
   }
