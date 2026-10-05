@@ -185,7 +185,7 @@ export async function createClass(data: Omit<ClassRoom, "id">): Promise<string> 
   }
 }
 
-export async function joinClassByCode(studentId: string, joinCode: string, profile?: { fullName?: string; rollNo?: string; erNo?: string; srNo?: string }): Promise<ClassRoom> {
+export async function joinClassByCode(userId: string, joinCode: string, profile?: { fullName?: string; rollNo?: string; erNo?: string; srNo?: string }, role: "student" | "teacher" | "admin" = "student"): Promise<ClassRoom> {
   const path = "classes";
   try {
     const q = query(
@@ -202,15 +202,18 @@ export async function joinClassByCode(studentId: string, joinCode: string, profi
     }
     const classData = classDoc.data() as ClassRoom;
     const teacherIds = classData.teacherIds || [classData.teacherId];
-    if (teacherIds.includes(studentId)) throw new Error("Class owners and co-teachers cannot join their own class.");
-    if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim()) throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
-    if (classData.studentIds?.includes(studentId)) {
-      return { id: classDoc.id, ...classData };
+    if (teacherIds.includes(userId)) throw new Error("Class owners and co-teachers cannot join their own class.");
+    if (role === "student") {
+      if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim()) throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
+      if (classData.studentIds?.includes(userId)) return { id: classDoc.id, ...classData };
+      await updateDoc(doc(db, "classes", classDoc.id), { studentIds: arrayUnion(userId) });
+    } else {
+      await updateDoc(doc(db, "classes", classDoc.id), {
+        teacherIds: arrayUnion(userId),
+        [`teacherNames.${userId}`]: profile?.fullName?.trim()?.slice(0, 120) || "Teacher",
+      });
     }
-    await updateDoc(doc(db, "classes", classDoc.id), {
-      studentIds: arrayUnion(studentId),
-    });
-    await updateDoc(doc(db, "users", studentId), {
+    await updateDoc(doc(db, "users", userId), {
       classIds: arrayUnion(classDoc.id),
       ...(profile?.fullName?.trim() ? { name: profile.fullName.trim().slice(0, 120) } : {}),
       ...(profile?.rollNo?.trim() ? { rollNo: profile.rollNo.trim().slice(0, 64) } : {}),
@@ -220,7 +223,8 @@ export async function joinClassByCode(studentId: string, joinCode: string, profi
     return {
       id: classDoc.id,
       ...classData,
-      studentIds: [...(classData.studentIds || []), studentId],
+      studentIds: role === "student" ? [...(classData.studentIds || []), userId] : classData.studentIds || [],
+      teacherIds: role === "student" ? teacherIds : [...new Set([...teacherIds, userId])],
     };
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
