@@ -1,0 +1,22 @@
+runConfig:
+  cpu: 1
+  memoryMiB: 1024
+  minInstances: 0
+  maxInstances: 20
+  concurrency: 80
+
+scripts:
+  buildCommand: npm run build
+  runCommand: node .output/server/index.mjs
+
+env:
+  - variable: FIREBASE_PROJECT_ID
+    value: erudite-airship-2wjrd
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: FIREBASE_STORAGE_BUCKET
+    value: erudite-airship-2wjrd.firebasestorage.app
+    availability:
+      - BUILD
+      - RUNTIME

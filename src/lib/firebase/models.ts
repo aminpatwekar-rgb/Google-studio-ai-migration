@@ -1,7 +1,7 @@
 export type AppRole = "admin" | "teacher" | "student";
 
 export interface UserProfile {
-  id: string; // uid
+  id: string;
   name: string;
   email: string | null;
   role: AppRole;
@@ -11,6 +11,8 @@ export interface UserProfile {
   avatarUrl?: string | null;
   institution?: string | null;
   rollNo?: string | null;
+  erNo?: string | null;
+  srNo?: string | null;
 }
 
 export interface ClassRoom {
@@ -23,6 +25,8 @@ export interface ClassRoom {
   createdAt: string;
   description?: string;
   subject?: string;
+  section?: string;
+  archived?: boolean;
 }
 
 export interface Assignment {
@@ -30,9 +34,33 @@ export interface Assignment {
   classId: string;
   title: string;
   description: string;
+  instructions?: string;
+  subject?: string;
   dueDate: string;
   maxPoints: number;
   createdBy: string;
+  createdAt: string;
+  published?: boolean;
+  archived?: boolean;
+  groupAssignment?: boolean;
+  submissionType?: "handwritten" | "typed" | "either";
+  autoCorrect?: boolean;
+  voiceTyping?: boolean;
+  linksAllowed?: boolean;
+  imagesAllowed?: boolean;
+  rubricId?: string | null;
+  referenceLinks?: string[];
+}
+
+export interface AssignmentAttachment {
+  id: string;
+  assignmentId: string;
+  storagePath: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+  uploadedBy: string;
   createdAt: string;
 }
 
@@ -42,7 +70,7 @@ export interface QuizQuestion {
   text: string;
   options?: string[];
   points: number;
-  correctAnswer?: string; // used when editing/creating by teacher
+  correctAnswer?: string;
 }
 
 export interface Quiz {
@@ -50,7 +78,7 @@ export interface Quiz {
   classId: string;
   title: string;
   questions: QuizQuestion[];
-  timeLimit: number; // in minutes
+  timeLimit: number;
   createdBy: string;
   createdAt: string;
 }
@@ -64,7 +92,7 @@ export interface QuizAnswerKey {
 export interface Submission {
   id: string;
   type: "assignment" | "quiz";
-  refId: string; // assignmentId or quizId
+  refId: string;
   classId: string;
   studentId: string;
   studentName?: string;

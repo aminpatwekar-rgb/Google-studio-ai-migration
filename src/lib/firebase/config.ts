@@ -1,11 +1,13 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 import firebaseConfig from "../../../firebase-applet-config.json";
 
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
 
 export enum OperationType {
   CREATE = "create",
@@ -26,18 +28,11 @@ export interface FirestoreErrorInfo {
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
     tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
+    providerInfo?: { providerId?: string | null; email?: string | null }[];
   };
 }
 
-export function handleFirestoreError(
-  error: unknown,
-  operationType: OperationType,
-  path: string | null,
-): never {
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -46,11 +41,10 @@ export function handleFirestoreError(
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
+      providerInfo: auth.currentUser?.providerData?.map((provider) => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || [],
     },
     operationType,
     path,
@@ -59,7 +53,6 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Test connection on boot per Firebase skill guidelines
 if (typeof window !== "undefined") {
   getDocFromServer(doc(db, "test", "connection")).catch((error) => {
     if (error instanceof Error && error.message.includes("the client is offline")) {
