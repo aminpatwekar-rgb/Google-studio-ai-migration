@@ -8,10 +8,12 @@ import {
   signOut as fbSignOut,
   type User as FirebaseUser,
 } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase/config";
 import type { AppRole, UserProfile } from "./firebase/models";
 import { clearSessionConfirmation, markSessionConfirmed } from "./session-confirm";
+import { provisionUserProfile } from "./firebase/auth-server";
+import { useServerFn } from "@tanstack/react-start";
 
 export type { AppRole };
 
@@ -57,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const provision = useServerFn(provisionUserProfile);
 
   const loadProfile = useCallback(async (fbUser: FirebaseUser): Promise<Profile> => {
     const userRef = doc(db, "users", fbUser.uid);
@@ -82,28 +85,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRole(p.role);
       return p;
     } else {
-      // First-time profile creation
-      const initialRole: AppRole = isAdminEmail ? "admin" : "student";
-      const newProfile: UserProfile = {
-        id: fbUser.uid,
-        name: fbUser.displayName || fbUser.email?.split("@")[0] || "User",
-        email: fbUser.email,
-        role: initialRole,
-        classIds: [],
-        createdAt: new Date().toISOString(),
-        plan: "Free",
-        avatarUrl: fbUser.photoURL || null,
-        institution: null,
-        rollNo: null,
-      };
-      await setDoc(userRef, newProfile);
+      const idToken = await fbUser.getIdToken();
+      const result = await provision({
+        data: {
+          idToken,
+          fullName: fbUser.displayName || "",
+          desiredRole: "student",
+        },
+      });
+      const newProfile = result.profile as UserProfile;
       const p: Profile = {
         ...newProfile,
         full_name: newProfile.name,
-        roll_no: null,
+        email: fbUser.email,
+        roll_no: newProfile.rollNo ?? null,
       };
       setProfile(p);
-      setRole(initialRole);
+      setRole(p.role);
       return p;
     }
   }, []);
@@ -157,26 +155,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isAdminEmail = fbUser.email === "aminpatwekar@gmail.com";
     const assignedRole: AppRole = isAdminEmail ? "admin" : desiredRole;
 
-    const newProfile: UserProfile = {
-      id: fbUser.uid,
-      name: fullName.trim() || fbUser.email?.split("@")[0] || "User",
-      email: fbUser.email,
-      role: assignedRole,
-      classIds: [],
-      createdAt: new Date().toISOString(),
-      plan: "Free",
-      avatarUrl: null,
-      institution: null,
-      rollNo: null,
-    };
-    await setDoc(doc(db, "users", fbUser.uid), newProfile);
+    const idToken = await fbUser.getIdToken();
+    const result = await provision({
+      data: {
+        idToken,
+        fullName,
+        desiredRole: assignedRole === "teacher" ? "teacher" : "student",
+      },
+    });
+    const newProfile = result.profile as UserProfile;
     const p: Profile = {
       ...newProfile,
       full_name: newProfile.name,
-      roll_no: null,
+      email: fbUser.email,
+      roll_no: newProfile.rollNo ?? null,
     };
     setProfile(p);
-    setRole(assignedRole);
+    setRole(p.role);
   };
 
   const signOut = async () => {
