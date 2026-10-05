@@ -305,7 +305,37 @@ export function exportClassRosterCsv(roster: UserProfile[]): string {
     .map((row) => row.map(escape).join(","))
     .join("\n");
 }
-\n// ================= ASSIGNMENTS =================
+\n
+// ================= NOTIFICATIONS =================
+
+export async function createNotification(input: Omit<OnyxNotification, "id">): Promise<string> {
+  const ref = doc(collection(db, "notifications"));
+  await setDoc(ref, { ...input, id: ref.id });
+  return ref.id;
+}
+
+export async function getNotifications(userId: string, limitCount = 50): Promise<OnyxNotification[]> {
+  const q = query(
+    collection(db, "notifications"),
+    where("userId", "==", userId),
+    orderBy("createdAt", "desc"),
+    limit(limitCount),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<OnyxNotification, "id">) }));
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  await updateDoc(doc(db, "notifications", notificationId), { read: true });
+}
+
+export async function markAllNotificationsRead(userId: string): Promise<void> {
+  const snap = await getDocs(query(collection(db, "notifications"), where("userId", "==", userId), where("read", "==", false)));
+  if (snap.empty) return;
+  await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { read: true })));
+}
+
+// ================= ASSIGNMENTS =================
 
 export async function getAssignmentsByClass(classId: string): Promise<Assignment[]> {
   const path = "assignments";
