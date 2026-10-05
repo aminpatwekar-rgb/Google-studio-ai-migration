@@ -545,10 +545,10 @@ export async function createSubmission(data: Omit<Submission, "id">): Promise<st
       id: ref.id,
       submittedAt: new Date().toISOString(),
       status: data.status || "submitted",
-      score: data.score ?? null,
-      feedback: data.feedback ?? null,
-      gradedBy: data.gradedBy ?? null,
-      gradedAt: data.gradedAt ?? null,
+      score: null,
+      feedback: null,
+      gradedBy: null,
+      gradedAt: null,
     });
     await setDoc(ref, submission);
     return ref.id;
@@ -565,6 +565,15 @@ export async function gradeSubmission(
 ): Promise<void> {
   const path = `submissions/${submissionId}`;
   try {
+    if (!Number.isFinite(score) || score < 0) throw new Error("Score must be a valid non-negative number.");
+    const snap = await getDoc(doc(db, "submissions", submissionId));
+    if (!snap.exists()) throw new Error("Submission not found.");
+    const sub = snap.data() as Submission;
+    if (sub.type === "assignment") {
+      const assignment = await getAssignment(sub.refId);
+      if (!assignment) throw new Error("Assignment not found.");
+      if (score > assignment.maxPoints) throw new Error(`Score cannot exceed ${assignment.maxPoints} points.`);
+    }
     const gradedAt = new Date().toISOString();
     await updateDoc(doc(db, "submissions", submissionId), {
       status: "graded",
