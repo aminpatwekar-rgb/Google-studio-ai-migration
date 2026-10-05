@@ -1,17 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getApps, initializeApp, applicationDefault } from "firebase-admin/app";
-import { getAuth as getAdminAuth } from "firebase-admin/auth";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 
-function getAdminApp() {
-  const apps = getApps();
-  if (apps.length) return apps[0]!;
-  return initializeApp({ credential: applicationDefault() });
+// firebase-admin is loaded lazily inside the handler so it can never end up in the browser bundle.
+async function getAdmin() {
+  const [{ getApps, initializeApp, applicationDefault }, { getAuth }, { getFirestore }] =
+    await Promise.all([
+      import("firebase-admin/app"),
+      import("firebase-admin/auth"),
+      import("firebase-admin/firestore"),
+    ]);
+  const { default: firebaseConfig } = await import("../../../firebase-applet-config.json");
+  const app =
+    getApps()[0] ??
+    initializeApp({ credential: applicationDefault(), projectId: firebaseConfig.projectId });
+  return { adminAuth: getAuth(app), adminDb: getFirestore(app, firebaseConfig.firestoreDatabaseId) };
 }
-
-const adminApp = getAdminApp();
-const adminAuth = getAdminAuth(adminApp);
-const adminDb = getAdminFirestore(adminApp);
 
 export type ProvisionProfileInput = {
   idToken: string;
@@ -29,6 +31,7 @@ export const provisionUserProfile = createServerFn({ method: "POST" })
     };
   })
   .handler(async ({ data }) => {
+    const { adminAuth, adminDb } = await getAdmin();
     const decoded = await adminAuth.verifyIdToken(data.idToken);
     const uid = decoded.uid;
     const userRef = adminDb.collection("users").doc(uid);

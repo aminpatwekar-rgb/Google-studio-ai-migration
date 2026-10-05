@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { requireFirebaseAuth, adminDb } from "@/lib/firebase/auth-middleware";
+import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
+import { adminDb } from "@/lib/firebase/admin";
 
 const TEST_AMOUNT_PAISE = 100;
 const CURRENCY = "INR";

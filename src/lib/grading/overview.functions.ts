@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireFirebaseAuth, adminDb } from "@/lib/firebase/auth-middleware";
+import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
+import { adminDb } from "@/lib/firebase/admin";
 import type {
   AssignmentGroup,
   AssignmentQueue,

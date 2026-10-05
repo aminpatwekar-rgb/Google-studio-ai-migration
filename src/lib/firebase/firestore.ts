@@ -26,6 +26,7 @@ import type {
   LeaderboardEntry,
   PaymentRecord,
   AppRole,
+  OnyxNotification,
 } from "./models";
 
 /** Recursively removes undefined properties so Firestore never throws `Unsupported field value: undefined` */
@@ -303,8 +304,7 @@ export function exportClassRosterCsv(roster: UserProfile[]): string {
   const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
   return [header, ...roster.map((u) => [u.name, u.rollNo, u.erNo, u.srNo])]
     .map((row) => row.map(escape).join(","))
-    .join("
-");
+    .join("\n");
 }
 
 // ================= NOTIFICATIONS =================
@@ -634,9 +634,7 @@ export async function gradeSubmission(
     });
 
     // Update leaderboard entry for student
-    const snap = await getDoc(doc(db, "submissions", submissionId));
-    if (snap.exists()) {
-      const sub = snap.data() as Submission;
+    {
       const userRef = doc(db, "leaderboard", sub.studentId);
       const userSnap = await getDoc(userRef);
       if (userSnap.exists()) {

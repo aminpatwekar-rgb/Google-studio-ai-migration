@@ -12,7 +12,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase/config";
 import type { AppRole, UserProfile } from "./firebase/models";
 import { clearSessionConfirmation, markSessionConfirmed } from "./session-confirm";
-import { provisionUserProfile } from "./firebase/auth-server";
+import { provisionUserProfile } from "./firebase/auth.functions";
 import { useServerFn } from "@tanstack/react-start";
 
 export type { AppRole };
