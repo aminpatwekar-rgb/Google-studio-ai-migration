@@ -1,5 +1,8 @@
 import { getQuiz, getClass, getSubmissionsByRef, getUserProfile } from "@/lib/firebase/firestore";
 import { percent, type QuestionType } from "@/lib/quiz/types";
+import type { Submission } from "@/lib/firebase/models";
+
+type SubmissionWithResults = Submission & { resultDetails?: Record<string, { answer?: string; correct?: boolean; marks?: number }> };
 
 export type StudentStat = {
   studentId: string;
@@ -82,7 +85,7 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
   const { quiz } = quizRes;
 
   const classRoom = quiz.classId ? await getClass(quiz.classId) : null;
-  const submissions = await getSubmissionsByRef(quizId);
+  const submissions = (await getSubmissionsByRef(quizId)) as SubmissionWithResults[];
 
   const rawQuestions = quiz.questions || [];
   const maxScore = rawQuestions.reduce((sum, q) => sum + (q.points || 0), 0);
@@ -101,7 +104,7 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
 
   const students: StudentStat[] = studentIds.map((id) => {
     const studentSubs = submissions.filter((s) => s.studentId === id);
-    const latestSub = studentSubs[0] || null;
+    const latestSub = studentSubs.slice().sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
 
     if (!latestSub) {
       return {
@@ -141,21 +144,49 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
   });
 
   const questionStats: QuestionStat[] = rawQuestions.map((q, i) => {
+    const id = q.id || `q-${i}`;
+    const optionCounts = new Map<string, number>((q.options || []).map((label) => [label, 0]));
+    let responses = 0;
+    let correct = 0;
+    let incorrect = 0;
+    let unanswered = 0;
+    let marks = 0;
+
+    for (const submission of submissions) {
+      const details = (submission as SubmissionWithResults).resultDetails?.[id];
+      const answer = String((submission.answers as Record<string, unknown> | undefined)?.[id] ?? "");
+      if (!answer.trim()) {
+        unanswered += 1;
+        continue;
+      }
+      responses += 1;
+      if (optionCounts.has(answer)) optionCounts.set(answer, (optionCounts.get(answer) || 0) + 1);
+      if (details?.correct) correct += 1;
+      else incorrect += 1;
+      marks += Number(details?.marks || 0);
+    }
+
+    const total = submissions.length || 1;
+    const correctPct = Math.round((correct / total) * 100);
     return {
-      id: q.id || `q-${i}`,
+      id,
       index: i + 1,
       prompt: q.text || "",
       type: (q.type as QuestionType) || "mcq",
       points: q.points || 0,
-      responses: submissions.length,
-      correct: 0,
-      incorrect: 0,
-      unanswered: 0,
-      correctPct: 0,
-      incorrectPct: 0,
-      avgMarks: 0,
-      difficulty: "Moderate",
-      options: (q.options || []).map((label) => ({ label, count: 0, pct: 0 })),
+      responses,
+      correct,
+      incorrect,
+      unanswered,
+      correctPct,
+      incorrectPct: Math.round((incorrect / total) * 100),
+      avgMarks: submissions.length ? Math.round((marks / submissions.length) * 100) / 100 : 0,
+      difficulty: difficultyOf(correctPct),
+      options: (q.options || []).map((label) => ({
+        label,
+        count: optionCounts.get(label) || 0,
+        pct: responses ? Math.round(((optionCounts.get(label) || 0) / responses) * 100) : 0,
+      })),
     };
   });
 

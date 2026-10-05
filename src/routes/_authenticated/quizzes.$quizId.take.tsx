@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { RenderMathText } from "@/components/math/RenderMathText";
-import { getQuiz, createSubmission, awardAchievement } from "@/lib/firebase/firestore";
+import { getQuiz, awardAchievement } from "@/lib/firebase/firestore";
+import { submitQuizAttempt } from "@/lib/quiz/submit.functions";
 
 export const Route = createFileRoute("/_authenticated/quizzes/$quizId/take")({
   head: () => ({
@@ -64,38 +65,14 @@ function TakeQuizPage() {
   const submitQuiz = useMutation({
     mutationFn: async () => {
       if (!user || !quizData.data) throw new Error("User or quiz not available");
-      const quiz = quizData.data;
-
-      // Calculate score based on questions
-      let score = 0;
-      let total = 0;
-      quiz.questions.forEach((q) => {
-        const pts = q.points || 10;
-        total += pts;
-        const studentAns = answers[q.id]?.trim();
-        // Give credit for answered questions
-        if (studentAns) {
-          score += pts;
-        }
+      const result = await submitQuizAttempt({
+        data: {
+          quizId,
+          answers,
+          submittedAt: new Date().toISOString(),
+        },
       });
-
-      await createSubmission({
-        type: "quiz",
-        refId: quizId,
-        classId: quiz.classId,
-        studentId: user.id,
-        studentName: profile?.name || "Student",
-        studentEmail: user.email || undefined,
-        answers,
-        submittedAt: new Date().toISOString(),
-        status: "submitted",
-        score,
-        feedback: null,
-        gradedBy: null,
-        gradedAt: new Date().toISOString(),
-      });
-
-      if (score >= total && total > 0) {
+      if (result.score >= result.maxScore && result.maxScore > 0) {
         await awardAchievement(user.id, {
           id: "quiz_champ",
           title: "Quiz Prodigy",
@@ -104,9 +81,10 @@ function TakeQuizPage() {
           points: 150,
         }).catch(() => {});
       }
+      return result;
     },
-    onSuccess: () => {
-      toast.success("Quiz submitted successfully!");
+    onSuccess: (result) => {
+      toast.success(`Quiz submitted — ${result.percentage}%`);
       void qc.invalidateQueries({ queryKey: ["quiz-submissions", quizId] });
       void qc.invalidateQueries({ queryKey: ["all-quizzes"] });
       void navigate({ to: "/quizzes/$quizId", params: { quizId } });
