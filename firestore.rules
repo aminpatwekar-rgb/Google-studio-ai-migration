@@ -138,6 +138,14 @@ service cloud.firestore {
       allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
       allow write: if isSignedIn() && (isAdmin() || isTeacherForClass(classId));
     }
+    match /notifications/{notificationId} {
+      allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
     match /achievements/{achievementId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
