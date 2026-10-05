@@ -85,7 +85,7 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
   const { quiz } = quizRes;
 
   const classRoom = quiz.classId ? await getClass(quiz.classId) : null;
-  const submissions = await getSubmissionsByRef(quizId);
+  const submissions = (await getSubmissionsByRef(quizId)) as SubmissionWithResults[];
 
   const rawQuestions = quiz.questions || [];
   const maxScore = rawQuestions.reduce((sum, q) => sum + (q.points || 0), 0);
@@ -104,7 +104,7 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
 
   const students: StudentStat[] = studentIds.map((id) => {
     const studentSubs = submissions.filter((s) => s.studentId === id);
-    const latestSub = studentSubs[0] || null;
+    const latestSub = studentSubs.slice().sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
 
     if (!latestSub) {
       return {
