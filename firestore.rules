@@ -73,8 +73,39 @@ service cloud.firestore {
 
     match /submissions/{submissionId} {
       allow get, list: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isTeacherForClass(resource.data.classId));
-      allow create: if isSignedIn() && incoming().studentId == request.auth.uid && incoming().status == 'submitted' && incoming().score == null;
-      allow update: if isSignedIn() && (isAdmin() || (isTeacherForClass(resource.data.classId) && incoming().diff(existing()).affectedKeys().hasOnly(['status','score','feedback','gradedBy','gradedAt'])));
+      allow create: if isSignedIn() &&
+        incoming().studentId == request.auth.uid &&
+        incoming().status == 'submitted' &&
+        incoming().score == null &&
+        incoming().gradedBy == null &&
+        incoming().gradedAt == null &&
+        exists(/databases/$(database)/documents/classes/$(incoming().classId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/classes/$(incoming().classId)).data.studentIds &&
+        (
+          (incoming().type == 'assignment' &&
+            exists(/databases/$(database)/documents/assignments/$(incoming().refId)) &&
+            get(/databases/$(database)/documents/assignments/$(incoming().refId)).data.classId == incoming().classId) ||
+          (incoming().type == 'quiz' &&
+            exists(/databases/$(database)/documents/quizzes/$(incoming().refId)) &&
+            get(/databases/$(database)/documents/quizzes/$(incoming().refId)).data.classId == incoming().classId)
+        );
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          isTeacherForClass(resource.data.classId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status','score','feedback','gradedBy','gradedAt']) &&
+          incoming().status == 'graded' &&
+          incoming().gradedBy == request.auth.uid &&
+          incoming().gradedAt != null &&
+          incoming().score >= 0 &&
+          (
+            (resource.data.type == 'assignment' &&
+              incoming().score <= get(/databases/$(database)/documents/assignments/$(resource.data.refId)).data.maxPoints) ||
+            (resource.data.type == 'quiz' &&
+              incoming().score <= 10000)
+          )
+        )
+      );
       allow delete: if isAdmin();
     }
 
