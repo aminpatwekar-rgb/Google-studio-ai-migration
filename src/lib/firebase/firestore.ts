@@ -131,9 +131,15 @@ export async function getClass(classId: string): Promise<ClassRoom | null> {
 export async function getTeacherClasses(teacherId: string): Promise<ClassRoom[]> {
   const path = "classes";
   try {
-    const q = query(collection(db, "classes"), where("teacherIds", "array-contains", teacherId));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClassRoom, "id">) }));
+    const [ownerSnap, memberSnap] = await Promise.all([
+      getDocs(query(collection(db, "classes"), where("teacherId", "==", teacherId))),
+      getDocs(query(collection(db, "classes"), where("teacherIds", "array-contains", teacherId))),
+    ]);
+    const byId = new Map<string, ClassRoom>();
+    for (const snap of [ownerSnap, memberSnap]) {
+      for (const d of snap.docs) byId.set(d.id, { id: d.id, ...(d.data() as Omit<ClassRoom, "id">) });
+    }
+    return Array.from(byId.values());
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }
