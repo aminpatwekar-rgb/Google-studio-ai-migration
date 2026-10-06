@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { arrayUnion } from "firebase/firestore";
 import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
 import { adminDb } from "@/lib/firebase/admin";
 
@@ -45,6 +44,7 @@ export const importClassStudents = createServerFn({ method: "POST" })
       throw new Error("Only the class teacher or an administrator can import students");
     }
 
+    const { FieldValue } = await import("firebase-admin/firestore");
     const userDocs = await adminDb.collection("users").get();
     const byEmail = new Map<string, { id: string; name: string }>();
 
@@ -78,7 +78,7 @@ export const importClassStudents = createServerFn({ method: "POST" })
         .doc(existingUser.id)
         .set(
           {
-            classIds: arrayUnion(data.classId) as any,
+            classIds: FieldValue.arrayUnion(data.classId),
             rollNo: student.roll_no || null,
           },
           { merge: true },

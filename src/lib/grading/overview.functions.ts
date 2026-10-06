@@ -24,108 +24,129 @@ async function getGraderScope(userId: string, email?: string) {
   return { userId, isAdmin };
 }
 
+/** Firestore `in` queries take at most 30 values. */
+function chunk<T>(items: T[], size = 30): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+async function byClassIds(collection: string, classIds: string[]) {
+  const parts = await Promise.all(
+    chunk(classIds).map((ids) => adminDb.collection(collection).where("classId", "in", ids).get()),
+  );
+  return parts.flatMap((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }) as any));
+}
+
+const isLate = (submittedAt?: string | null, due?: string | null) =>
+  Boolean(submittedAt && due && new Date(submittedAt).getTime() > new Date(due).getTime());
+
+const oldest = (dates: (string | null | undefined)[]) =>
+  dates.filter((d): d is string => Boolean(d)).sort()[0] ?? null;
+
 export const getGradingOverview = createServerFn({ method: "GET" })
   .middleware([requireFirebaseAuth])
   .handler(async ({ context }) => {
     const { userId, isAdmin } = await getGraderScope(context.userId, context.email);
 
-    // Get classes
+    // Only the classes this person teaches (owner or co-teacher); admins see everything.
     const classesSnap = await adminDb.collection("classes").get();
     const allClasses = classesSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
-    const teacherClasses = isAdmin ? allClasses : allClasses.filter((c) => c.teacherId === userId);
-    const teacherClassIds = new Set(teacherClasses.map((c) => c.id));
-    const classMap = new Map(allClasses.map((c) => [c.id, c.name]));
+    const teacherClasses = isAdmin
+      ? allClasses
+      : allClasses.filter(
+          (c) => c.teacherId === userId || (Array.isArray(c.teacherIds) && c.teacherIds.includes(userId)),
+        );
+    const classIds = teacherClasses.map((c) => c.id as string);
+    const classMap = new Map<string, string>(allClasses.map((c) => [c.id, c.name]));
 
-    // Get assignments
-    const assignSnap = await adminDb.collection("assignments").get();
-    const allAssignments = assignSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
-    const assignments = allAssignments.filter(
-      (a) => isAdmin || teacherClassIds.has(a.classId) || a.createdBy === userId,
-    );
+    const [assignments, quizzes, submissions] = classIds.length
+      ? await Promise.all([
+          byClassIds("assignments", classIds),
+          byClassIds("quizzes", classIds),
+          byClassIds("submissions", classIds),
+        ])
+      : [[], [], []];
 
-    // Get quizzes
-    const quizSnap = await adminDb.collection("quizzes").get();
-    const allQuizzes = quizSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
-    const quizzes = allQuizzes.filter(
-      (q) => isAdmin || teacherClassIds.has(q.classId) || q.createdBy === userId,
-    );
+    const dueById = new Map<string, string | null>(assignments.map((a) => [a.id, a.dueDate ?? null]));
+    const titleById = new Map<string, string>([
+      ...assignments.map((a) => [a.id, a.title] as [string, string]),
+      ...quizzes.map((q) => [q.id, q.title] as [string, string]),
+    ]);
 
-    // Get submissions
-    const subSnap = await adminDb.collection("submissions").get();
-    const allSubs = subSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
-    const submissions = allSubs.filter((s) => isAdmin || teacherClassIds.has(s.classId));
+    const assignmentGroups: AssignmentGroup[] = assignments
+      .filter((a) => a.archived !== true)
+      .map((a) => {
+        const cls = teacherClasses.find((c) => c.id === a.classId);
+        const subs = submissions.filter((s) => s.type === "assignment" && s.refId === a.id);
+        const waitingSubs = subs.filter((s) => s.status === "submitted");
+        return {
+          id: a.id,
+          title: a.title,
+          class_id: a.classId,
+          class_name: classMap.get(a.classId) || "Class",
+          subject: a.subject ?? null,
+          due_date: a.dueDate || null,
+          max_marks: Number(a.maxPoints) || 100,
+          waiting: waitingSubs.length,
+          late_waiting: waitingSubs.filter((s) => isLate(s.submittedAt, a.dueDate)).length,
+          graded_unreleased: 0,
+          released: subs.filter((s) => s.status === "graded").length,
+          returned: 0,
+          roster: cls?.studentIds?.length || 0,
+          oldest_waiting_at: oldest(waitingSubs.map((s) => s.submittedAt)),
+        };
+      });
 
-    // Build assignment groups
-    const assignmentGroups: AssignmentGroup[] = assignments.map((a) => {
-      const cls = teacherClasses.find((c) => c.id === a.classId);
-      const subs = submissions.filter((s) => s.type === "assignment" && s.refId === a.id);
-      const waiting = subs.filter((s) => s.status === "submitted").length;
-      const graded = subs.filter((s) => s.status === "graded").length;
+    const quizGroups: QuizGroup[] = quizzes
+      .filter((q) => q.archived !== true)
+      .map((q) => {
+        const subs = submissions.filter((s) => s.type === "quiz" && s.refId === q.id);
+        const waitingSubs = subs.filter((s) => s.status === "submitted");
+        return {
+          id: q.id,
+          title: q.title,
+          class_id: q.classId,
+          class_name: classMap.get(q.classId) || "Class",
+          kind: String(q.kind ?? "quiz"),
+          waiting: waitingSubs.length,
+          graded: subs.filter((s) => s.status === "graded").length,
+          attempts: subs.length,
+          oldest_waiting_at: oldest(waitingSubs.map((s) => s.submittedAt)),
+        };
+      });
 
-      return {
-        id: a.id,
-        title: a.title,
-        class_id: a.classId,
-        class_name: classMap.get(a.classId) || "Class",
-        subject: null,
-        due_date: a.dueDate || null,
-        max_marks: Number(a.maxPoints) || 100,
-        waiting,
-        late_waiting: 0,
-        graded_unreleased: 0,
-        released: graded,
-        returned: 0,
-        roster: cls?.studentIds?.length || 0,
-        oldest_waiting_at: null,
-      };
-    });
-
-    // Build quiz groups
-    const quizGroups: QuizGroup[] = quizzes.map((q) => {
-      const subs = submissions.filter((s) => s.type === "quiz" && s.refId === q.id);
-      const waiting = subs.filter((s) => s.status === "submitted").length;
-      const graded = subs.filter((s) => s.status === "graded").length;
-
-      return {
-        id: q.id,
-        title: q.title,
-        class_id: q.classId,
-        class_name: classMap.get(q.classId) || "Class",
-        kind: "quiz",
-        waiting,
-        graded,
-        attempts: subs.length,
-        oldest_waiting_at: null,
-      };
-    });
-
-    // Up next items
-    const up_next: WaitingItem[] = submissions
+    const waitingAll = submissions
       .filter((s) => s.status === "submitted")
-      .slice(0, 10)
-      .map((s) => ({
-        kind: s.type || "assignment",
-        group_id: s.refId,
-        item_id: s.id,
-        title: s.type === "quiz" ? "Quiz Submission" : "Assignment Submission",
-        class_name: classMap.get(s.classId) || "Class",
-        student_name: s.studentName || "Student",
-        submitted_at: s.submittedAt || null,
-        is_late: false,
-      }));
+      .sort((a, b) => String(a.submittedAt ?? "").localeCompare(String(b.submittedAt ?? "")));
 
-    const totalWaiting = submissions.filter((s) => s.status === "submitted").length;
-    const totalGraded = submissions.filter((s) => s.status === "graded").length;
+    const up_next: WaitingItem[] = waitingAll.slice(0, 10).map((s) => ({
+      kind: s.type === "quiz" ? "quiz" : "assignment",
+      group_id: s.refId,
+      item_id: s.id,
+      title: titleById.get(s.refId) ?? (s.type === "quiz" ? "Quiz" : "Assignment"),
+      class_name: classMap.get(s.classId) || "Class",
+      student_name: s.studentName || "Student",
+      submitted_at: s.submittedAt || null,
+      is_late: s.type === "quiz" ? Boolean(s.late) : isLate(s.submittedAt, dueById.get(s.refId)),
+    }));
+
+    const weekAgo = Date.now() - 7 * 86_400_000;
+    const gradedThisWeek = submissions.filter(
+      (s) => s.status === "graded" && s.gradedAt && new Date(s.gradedAt).getTime() >= weekAgo,
+    ).length;
 
     return {
       assignments: assignmentGroups,
       quizzes: quizGroups,
       up_next,
       stats: {
-        waiting: totalWaiting,
-        late_waiting: 0,
+        waiting: waitingAll.length,
+        late_waiting: waitingAll.filter((s) =>
+          s.type === "quiz" ? Boolean(s.late) : isLate(s.submittedAt, dueById.get(s.refId)),
+        ).length,
         ready_to_release: 0,
-        graded_this_week: totalGraded,
+        graded_this_week: gradedThisWeek,
       },
     } satisfies GradingOverview;
   });
@@ -148,7 +169,7 @@ export const getAssignmentGradingQueue = createServerFn({ method: "GET" })
     const classDoc = await adminDb.collection("classes").doc(assignment.classId).get();
     const classData = classDoc.data();
 
-    if (!isAdmin && assignment.createdBy !== userId && classData?.teacherId !== userId) {
+    if (!isAdmin && assignment.createdBy !== userId && !(classData?.teacherIds ?? [classData?.teacherId]).includes(userId)) {
       throw new Error("Forbidden: You cannot grade this assignment.");
     }
 
@@ -164,7 +185,7 @@ export const getAssignmentGradingQueue = createServerFn({ method: "GET" })
         student_id: s.studentId,
         student_name: s.studentName || "Student",
         status: s.status,
-        is_late: false,
+        is_late: isLate(s.submittedAt, assignment.dueDate),
         submitted_at: s.submittedAt || null,
         marks_awarded: s.score != null ? Number(s.score) : null,
         grade_released: s.status === "graded",
@@ -219,7 +240,7 @@ export const getQuizGradingQueue = createServerFn({ method: "GET" })
     const classDoc = await adminDb.collection("classes").doc(quiz.classId).get();
     const classData = classDoc.data();
 
-    if (!isAdmin && quiz.createdBy !== userId && classData?.teacherId !== userId) {
+    if (!isAdmin && quiz.createdBy !== userId && !(classData?.teacherIds ?? [classData?.teacherId]).includes(userId)) {
       throw new Error("Forbidden: You cannot grade this quiz.");
     }
 
@@ -231,11 +252,11 @@ export const getQuizGradingQueue = createServerFn({ method: "GET" })
         attempt_id: d.id,
         student_id: s.studentId,
         student_name: s.studentName || "Student",
-        attempt_no: 1,
+        attempt_no: Number(s.attemptNo) || 1,
         status: s.status,
         needs_manual_grading: s.status === "submitted",
         score: s.score != null ? Number(s.score) : null,
-        max_score: 100,
+        max_score: s.maxScore != null ? Number(s.maxScore) : null,
         submitted_at: s.submittedAt || null,
         graded_at: s.gradedAt || null,
       };
@@ -246,7 +267,7 @@ export const getQuizGradingQueue = createServerFn({ method: "GET" })
         id: quizDoc.id,
         title: quiz.title,
         class_name: classData?.name || "Class",
-        passing_marks: 40,
+        passing_marks: Number(quiz.passingMarks) || 0,
       },
       rows,
     } satisfies QuizQueue;

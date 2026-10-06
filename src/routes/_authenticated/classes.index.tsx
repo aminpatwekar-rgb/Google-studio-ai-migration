@@ -30,6 +30,10 @@ import {
 import type { ClassRoom } from "@/lib/firebase/models";
 
 export const Route = createFileRoute("/_authenticated/classes/")({
+  validateSearch: (search: Record<string, unknown>): { join?: string } => {
+    const raw = typeof search["join"] === "string" ? search["join"].trim().toUpperCase() : "";
+    return /^[A-Z0-9]{4,12}$/.test(raw) ? { join: raw } : {};
+  },
   head: () => ({
     meta: [
       { title: "Classes — ONYX" },
@@ -48,6 +52,7 @@ export const Route = createFileRoute("/_authenticated/classes/")({
 function Classes() {
   const { role, user, profile } = useAuth();
   const { effectiveRole } = useViewRole();
+  const { join: inviteCode } = Route.useSearch();
   const shouldReduceMotion = useReducedMotion();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -63,6 +68,13 @@ function Classes() {
   const [srNo, setSrNo] = useState("");
 
   const isTeacher = effectiveRole === "teacher" || effectiveRole === "admin";
+
+  // Invite links look like /classes?join=ABC123 — open the join dialog with the code filled in.
+  useEffect(() => {
+    if (!inviteCode) return;
+    setCode(inviteCode);
+    setJoinOpen(true);
+  }, [inviteCode]);
 
   useEffect(() => {
     if (!joinOpen || isTeacher) return;
@@ -119,7 +131,7 @@ function Classes() {
         if (!studentName.trim()) throw new Error("Full name is required");
         if (!rollNo.trim() && !erNo.trim() && !srNo.trim()) throw new Error("Enter at least one Roll No, ER No, or SR No.");
       }
-      return await joinClassByCode(user!.id, code.trim(), { fullName: studentName, rollNo, erNo, srNo }, effectiveRole);
+      return await joinClassByCode(user!.id, code.trim(), { fullName: studentName, rollNo, erNo, srNo }, effectiveRole ?? "student");
     },
     onSuccess: (res) => {
       toast.success(`Joined ${res.name}!`);

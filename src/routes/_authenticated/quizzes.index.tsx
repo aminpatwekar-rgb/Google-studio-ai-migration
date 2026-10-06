@@ -2,16 +2,22 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ClipboardList, Plus, Timer, Trash2, ChevronRight } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ClipboardList, Lock, Plus, Timer, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
+import { KIND_LABEL, percent, type QuizKind } from "@/lib/quiz/types";
+import { DeleteQuizButton } from "@/components/DeleteQuizButton";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -25,321 +31,535 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  getTeacherClasses,
-  getAllClasses,
-  getStudentClasses,
-  getQuizzesByClass,
   createQuiz,
   deleteQuiz,
+  getAllClasses,
+  getClassSubmissions,
+  getQuizzesByClass,
+  getStudentClasses,
   getStudentSubmissions,
+  getTeacherClasses,
+  updateQuiz,
 } from "@/lib/firebase/firestore";
-import type { Quiz } from "@/lib/firebase/models";
+import type { Quiz, Submission } from "@/lib/firebase/models";
 
 export const Route = createFileRoute("/_authenticated/quizzes/")({
   head: () => ({
     meta: [
-      { title: "Quizzes — ONYX" },
-      { name: "description", content: "Create and take quizzes with formatted math equations." },
-      { property: "og:title", content: "Quizzes — ONYX" },
+      { title: "Quizzes & Exams — ONYX" },
+      {
+        name: "description",
+        content:
+          "Create AI-generated quizzes, run secure exams and track attempts across your ONYX classes.",
+      },
+      { property: "og:title", content: "Quizzes & Exams — ONYX" },
+      { name: "robots", content: "noindex" },
     ],
   }),
   component: QuizzesPage,
 });
 
+type QuizRow = Quiz & { className: string };
+
+// Quizzes created before drafts existed have no flag and are already visible to students.
+const isLive = (q: Quiz) => q.published !== false;
+
 function QuizzesPage() {
-  const { user } = useAuth();
+  const { role } = useAuth();
   const { effectiveRole } = useViewRole();
+  if (!role) return <ListSkeleton />;
+  return effectiveRole === "student" ? <StudentQuizzes /> : <TeacherQuizzes />;
+}
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-9 w-52" />
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-24 w-full rounded-xl" />
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="panel flex flex-col items-center gap-2 p-10 text-center">
+      <ClipboardList className="size-6 text-muted-foreground" aria-hidden />
+      <p className="font-medium">{title}</p>
+      <p className="max-w-sm text-sm text-muted-foreground">{body}</p>
+    </div>
+  );
+}
+
+/* ------------------------------ create dialog ---------------------------- */
+
+function CreateQuizDialog() {
+  const { user, role } = useAuth();
   const qc = useQueryClient();
   const navigate = useNavigate();
-
-  const isTeacher = effectiveRole === "teacher" || effectiveRole === "admin";
-  const [createOpen, setCreateOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [classId, setClassId] = useState("");
-  const [timeLimit, setTimeLimit] = useState("20");
+  const [kind, setKind] = useState<QuizKind>("practice");
 
   const classes = useQuery({
-    queryKey: ["quizzes-classes", user?.id, effectiveRole],
-    enabled: Boolean(user),
-    queryFn: async () => {
-      if (effectiveRole === "admin") return await getAllClasses();
-      if (isTeacher) return await getTeacherClasses(user!.id);
-      return await getStudentClasses(user!.id);
-    },
+    enabled: open && Boolean(user),
+    queryKey: ["quiz-create-classes", user?.id, role],
+    queryFn: () => (role === "admin" ? getAllClasses() : getTeacherClasses(user!.id)),
   });
 
-  const quizzes = useQuery({
-    queryKey: ["all-quizzes", user?.id, classes.data?.length],
-    enabled: Boolean(classes.data?.length),
-    queryFn: async () => {
-      const cls = classes.data || [];
-      const classMap = new Map(cls.map((c) => [c.id, c.name]));
-      let all: (Quiz & { className?: string })[] = [];
-
-      for (const c of cls) {
-        const qList = await getQuizzesByClass(c.id);
-        all = all.concat(qList.map((q) => ({ ...q, className: c.name })));
-      }
-      return { list: all, classMap };
-    },
-  });
-
-  const studentSubmissions = useQuery({
-    queryKey: ["student-quiz-subs", user?.id],
-    enabled: !isTeacher && Boolean(user),
-    queryFn: async () => {
-      const subs = await getStudentSubmissions(user!.id);
-      return new Map(subs.filter((s) => s.type === "quiz").map((s) => [s.refId, s]));
-    },
-  });
-
-  const newQuiz = useMutation({
+  const create = useMutation({
     mutationFn: async () => {
-      if (!title.trim()) throw new Error("Title is required");
-      if (!classId) throw new Error("Please select a class");
-
-      // Sample template quiz with math equation questions
-      const sampleQuestions = [
-        {
-          id: "q1",
-          type: "single_choice" as const,
-          text: "What is the solution to $x^2 - 16 = 0$?",
-          options: ["$x = \\pm 4$", "$x = 4$", "$x = 16$", "$x = \\pm 2$"],
-          points: 10,
-          correctAnswer: "$x = \\pm 4$",
-        },
-        {
-          id: "q2",
-          type: "single_choice" as const,
-          text: "Calculate the derivative: $\\frac{d}{dx}(3x^3 + 2x)$",
-          options: ["$9x^2 + 2$", "$3x^2 + 2$", "$6x + 2$", "$9x^3$"],
-          points: 10,
-          correctAnswer: "$9x^2 + 2$",
-        },
-        {
-          id: "q3",
-          type: "text" as const,
-          text: "State Pythagoras' Theorem in mathematical notation.",
-          points: 10,
-          correctAnswer: "a^2 + b^2 = c^2",
-        },
-      ];
-
-      const answerKey: Record<string, string | number> = {
-        q1: "$x = \\pm 4$",
-        q2: "$9x^2 + 2$",
-        q3: "a^2 + b^2 = c^2",
-      };
-
-      const quizId = await createQuiz(
+      if (!user) throw new Error("Please sign in again.");
+      return createQuiz(
         {
           classId,
           title: title.trim(),
-          questions: sampleQuestions,
-          timeLimit: parseInt(timeLimit, 10) || 20,
-          createdBy: user!.id,
+          questions: [],
+          kind,
+          timeLimit: kind === "practice" ? 0 : 30,
+          maxAttempts: 1,
+          passingMarks: 0,
+          lockdownEnabled: kind === "exam",
+          randomizeQuestions: false,
+          randomizeChoices: false,
+          showResults: true,
+          startAt: null,
+          endAt: null,
+          // New quizzes start as drafts: students only see them after Publish.
+          published: false,
+          archived: false,
+          createdBy: user.id,
           createdAt: new Date().toISOString(),
         },
-        answerKey,
+        {},
       );
-
-      return quizId;
     },
-    onSuccess: (quizId) => {
-      toast.success("Quiz created!");
-      setCreateOpen(false);
+    onSuccess: (id) => {
+      toast.success("Quiz created");
+      setOpen(false);
       setTitle("");
       setClassId("");
-      void qc.invalidateQueries({ queryKey: ["all-quizzes"] });
-      void navigate({ to: "/quizzes/$quizId/edit", params: { quizId } });
+      void qc.invalidateQueries({ queryKey: ["teacher-quizzes"] });
+      void navigate({ to: "/quizzes/$quizId/edit", params: { quizId: id } });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>
+          <Plus className="mr-2 size-4" /> New quiz
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a quiz</DialogTitle>
+          <DialogDescription>
+            Pick the class and style. You'll add questions next — by hand or with AI.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="quiz-title">Title</Label>
+            <Input
+              id="quiz-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Chapter 4 check-in"
+              maxLength={120}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="quiz-class">Class</Label>
+            <Select value={classId} onValueChange={setClassId}>
+              <SelectTrigger id="quiz-class">
+                <SelectValue placeholder="Choose a class" />
+              </SelectTrigger>
+              <SelectContent>
+                {(classes.data ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {classes.isSuccess && !classes.data?.length && (
+              <p className="text-xs text-muted-foreground">Create a class first.</p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="quiz-kind">Type</Label>
+            <Select value={kind} onValueChange={(v) => setKind(v as QuizKind)}>
+              <SelectTrigger id="quiz-kind">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(KIND_LABEL) as QuizKind[]).map((k) => (
+                  <SelectItem key={k} value={k}>
+                    {KIND_LABEL[k]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            disabled={!title.trim() || !classId || create.isPending}
+            onClick={() => create.mutate()}
+          >
+            {create.isPending ? "Creating…" : "Create & add questions"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* -------------------------------- teacher -------------------------------- */
+
+function TeacherQuizzes() {
+  const { user, role } = useAuth();
+  const qc = useQueryClient();
+
+  const q = useQuery({
+    queryKey: ["teacher-quizzes", user?.id, role],
+    enabled: Boolean(user),
+    queryFn: async () => {
+      const classes = role === "admin" ? await getAllClasses() : await getTeacherClasses(user!.id);
+      const perClass = await Promise.all(
+        classes.map(async (c) => {
+          const [quizzes, subs] = await Promise.all([
+            getQuizzesByClass(c.id),
+            getClassSubmissions(c.id),
+          ]);
+          return { c, quizzes, subs };
+        }),
+      );
+      const rows: QuizRow[] = [];
+      const attempts = new Map<string, number>();
+      for (const { c, quizzes, subs } of perClass) {
+        for (const quiz of quizzes) rows.push({ ...quiz, className: c.name });
+        for (const s of subs as Submission[]) {
+          if (s.type === "quiz") attempts.set(s.refId, (attempts.get(s.refId) ?? 0) + 1);
+        }
+      }
+      rows.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      return { rows, attempts };
+    },
+  });
+
+  const patch = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<Quiz>; label: string }) =>
+      updateQuiz(id, data),
+    onSuccess: (_d, v) => {
+      toast.success(v.label);
+      void qc.invalidateQueries({ queryKey: ["teacher-quizzes"] });
+      void qc.invalidateQueries({ queryKey: ["class-quizzes"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const removeQuiz = useMutation({
-    mutationFn: async (quizId: string) => {
-      await deleteQuiz(quizId);
-    },
+    mutationFn: (id: string) => deleteQuiz(id),
     onSuccess: () => {
       toast.success("Quiz deleted");
-      void qc.invalidateQueries({ queryKey: ["all-quizzes"] });
+      void qc.invalidateQueries({ queryKey: ["teacher-quizzes"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const list = quizzes.data?.list || [];
+  if (q.isLoading) return <ListSkeleton />;
+  if (q.isError)
+    return (
+      <div className="panel p-6 text-sm text-destructive">
+        Couldn't load quizzes. {(q.error as Error).message}
+      </div>
+    );
+
+  const attempts = q.data?.attempts ?? new Map<string, number>();
+  const live = (q.data?.rows ?? []).filter((x) => !x.archived);
+  const archived = (q.data?.rows ?? []).filter((x) => x.archived);
+
+  const row = (x: QuizRow, index: number) => {
+    const questions = (x.questions ?? []).length;
+    const published = isLive(x);
+    return (
+      <motion.div
+        key={x.id}
+        layout
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ delay: Math.min(index * 0.035, 0.3), duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="panel flex flex-wrap items-center gap-3 p-4"
+      >
+        <div className="min-w-0 flex-1">
+          <Link
+            to="/quizzes/$quizId"
+            params={{ quizId: x.id }}
+            className="font-medium hover:underline"
+          >
+            {x.title}
+          </Link>
+          <p className="truncate text-sm text-muted-foreground">
+            {x.className} · {KIND_LABEL[(x.kind ?? (x.timeLimit ? "timed" : "practice")) as QuizKind]} ·{" "}
+            {questions} question{questions === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {x.lockdownEnabled && (
+            <Badge variant="outline" className="gap-1">
+              <Lock className="size-3" /> Lockdown
+            </Badge>
+          )}
+          {x.timeLimit ? (
+            <Badge variant="outline" className="gap-1">
+              <Timer className="size-3" /> {x.timeLimit}m
+            </Badge>
+          ) : null}
+          <Badge variant="outline" className="gap-1">
+            <Users className="size-3" /> {attempts.get(x.id) ?? 0}
+          </Badge>
+          <Badge variant={published ? "default" : "secondary"}>
+            {published ? "Published" : "Draft"}
+          </Badge>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/quizzes/$quizId/edit" params={{ quizId: x.id }}>
+              Edit
+            </Link>
+          </Button>
+          <Button
+            size="sm"
+            variant={published ? "ghost" : "default"}
+            disabled={patch.isPending || questions === 0}
+            onClick={() =>
+              patch.mutate({
+                id: x.id,
+                data: { published: !published },
+                label: published ? "Quiz unpublished" : "Quiz published",
+              })
+            }
+          >
+            {published ? "Unpublish" : "Publish"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={patch.isPending}
+            onClick={() =>
+              patch.mutate({
+                id: x.id,
+                data: { archived: !x.archived },
+                label: x.archived ? "Quiz restored" : "Quiz archived",
+              })
+            }
+          >
+            {x.archived ? "Restore" : "Archive"}
+          </Button>
+          <DeleteQuizButton
+            title={x.title}
+            pending={removeQuiz.isPending}
+            onConfirm={() => removeQuiz.mutate(x.id)}
+          />
+        </div>
+      </motion.div>
+    );
+  };
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 border-b border-border/60 pb-6 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Quizzes</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {isTeacher
-              ? "Create interactive quizzes and exams with KaTeX math equation support."
-              : "Complete quizzes for your classes and test your knowledge."}
+          <h1 className="text-2xl font-semibold tracking-tight">Quizzes & exams</h1>
+          <p className="text-sm text-muted-foreground">
+            Generate questions with AI, run secure exams, and track every attempt.
           </p>
         </div>
-
-        {isTeacher && (
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="gap-1.5 press">
-                <Plus className="size-4" /> New Quiz
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create a New Quiz</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="q-title">Quiz Title</Label>
-                  <Input
-                    id="q-title"
-                    placeholder="e.g. Midterm Calculus Quiz"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Class</Label>
-                  <Select value={classId} onValueChange={setClassId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select class" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(classes.data || []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="q-time">Time Limit (minutes)</Label>
-                  <Input
-                    id="q-time"
-                    type="number"
-                    min={5}
-                    max={180}
-                    value={timeLimit}
-                    onChange={(e) => setTimeLimit(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={() => newQuiz.mutate()} disabled={newQuiz.isPending}>
-                  {newQuiz.isPending ? "Creating..." : "Create & Edit Questions"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/question-bank" search={{ quizId: undefined }}>Question bank</Link>
+          </Button>
+          <CreateQuizDialog />
+        </div>
       </header>
 
-      {quizzes.isLoading ? (
-        <div className="grid gap-3">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
-          ))}
-        </div>
-      ) : list.length === 0 ? (
-        <div className="panel p-12 text-center border-dashed">
-          <ClipboardList className="mx-auto size-10 text-muted-foreground/60" />
-          <h3 className="mt-3 text-base font-semibold">No quizzes found</h3>
-          <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
-            {isTeacher
-              ? "Create your first quiz to test your students with multiple choice and math equations."
-              : "Your teacher has not published any quizzes for your classes yet."}
+      <Tabs defaultValue="live">
+        <TabsList>
+          <TabsTrigger value="live">Active ({live.length})</TabsTrigger>
+          <TabsTrigger value="archived">Archived ({archived.length})</TabsTrigger>
+        </TabsList>
+        <TabsContent value="live" className="mt-4 space-y-3">
+          {live.length ? (
+            <AnimatePresence mode="popLayout">{live.map(row)}</AnimatePresence>
+          ) : (
+            <EmptyState
+              title="No quizzes yet"
+              body="Create your first quiz and let AI draft the questions from your notes."
+            />
+          )}
+        </TabsContent>
+        <TabsContent value="archived" className="mt-4 space-y-3">
+          {archived.length ? (
+            <AnimatePresence mode="popLayout">{archived.map(row)}</AnimatePresence>
+          ) : (
+            <EmptyState title="Nothing archived" body="Archived quizzes will appear here." />
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+/* -------------------------------- student -------------------------------- */
+
+function StudentQuizzes() {
+  const { user } = useAuth();
+
+  const q = useQuery({
+    queryKey: ["student-quizzes", user?.id],
+    enabled: Boolean(user),
+    queryFn: async () => {
+      const classes = await getStudentClasses(user!.id);
+      const perClass = await Promise.all(
+        classes.map(async (c) =>
+          (await getQuizzesByClass(c.id)).map((quiz): QuizRow => ({ ...quiz, className: c.name })),
+        ),
+      );
+      const quizzes = perClass
+        .flat()
+        .filter((x) => isLive(x) && !x.archived)
+        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      const subs = (await getStudentSubmissions(user!.id)).filter((s) => s.type === "quiz");
+      return { quizzes, subs };
+    },
+  });
+
+  if (q.isLoading) return <ListSkeleton />;
+  if (q.isError)
+    return (
+      <div className="panel p-6 text-sm text-destructive">
+        Couldn't load quizzes. {(q.error as Error).message}
+      </div>
+    );
+
+  const subs = q.data?.subs ?? [];
+  // Latest attempt per quiz drives the badge; the count drives "attempts left".
+  const latest = new Map<string, Submission>();
+  for (const s of [...subs].sort((a, b) => (a.attemptNo ?? 1) - (b.attemptNo ?? 1))) {
+    latest.set(s.refId, s);
+  }
+
+  const all = q.data?.quizzes ?? [];
+  const done = all.filter((x) => latest.has(x.id));
+  const available = all.filter((x) => !latest.has(x.id));
+
+  const card = (x: QuizRow, index: number) => {
+    const a = latest.get(x.id);
+    const count = (x.questions ?? []).length;
+    const used = subs.filter((t) => t.refId === x.id).length;
+    const exhausted = used >= (x.maxAttempts ?? 1);
+    const notOpen = x.startAt ? new Date(x.startAt) > new Date() : false;
+    const closed = x.endAt ? new Date(x.endAt) < new Date() : false;
+    const total = x.totalMarks || (x.questions ?? []).reduce((n, qu) => n + (Number(qu.points) || 0), 0);
+
+    return (
+      <motion.div
+        key={x.id}
+        layout
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ delay: Math.min(index * 0.035, 0.3), duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="panel flex flex-wrap items-center gap-3 p-4"
+      >
+        <div className="min-w-0 flex-1">
+          <Link
+            to="/quizzes/$quizId"
+            params={{ quizId: x.id }}
+            className="font-medium hover:underline"
+          >
+            {x.title}
+          </Link>
+          <p className="truncate text-sm text-muted-foreground">
+            {x.className} · {count} question{count === 1 ? "" : "s"}
+            {x.timeLimit ? ` · ${x.timeLimit} min` : ""}
           </p>
         </div>
-      ) : (
-        <div className="grid gap-3">
-          {list.map((q) => {
-            const sub = studentSubmissions.data?.get(q.id);
-            const isCompleted = Boolean(sub);
-
-            return (
-              <div
-                key={q.id}
-                className="panel p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-card hover:border-primary/40 transition-all hover:shadow-sm"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-base text-foreground">{q.title}</p>
-                    {q.className && (
-                      <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">
-                        {q.className}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Timer className="size-3.5" /> {q.timeLimit || 20} mins
-                    </span>
-                    <span>•</span>
-                    <span>{(q.questions || []).length} questions</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {isTeacher ? (
-                    <>
-                      <Button asChild size="sm" variant="outline">
-                        <Link to="/quizzes/$quizId/edit" params={{ quizId: q.id }}>
-                          Edit Questions
-                        </Link>
-                      </Button>
-                      <Button asChild size="sm">
-                        <Link to="/quizzes/$quizId" params={{ quizId: q.id }}>
-                          View
-                        </Link>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:bg-destructive/10"
-                        onClick={() => removeQuiz.mutate(q.id)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      {isCompleted ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-success bg-success/10 px-2.5 py-1 rounded">
-                            Score: {sub?.score} pts
-                          </span>
-                          <Button asChild size="sm" variant="outline">
-                            <Link to="/quizzes/$quizId" params={{ quizId: q.id }}>
-                              Review
-                            </Link>
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button asChild size="sm">
-                          <Link to="/quizzes/$quizId/take" params={{ quizId: q.id }}>
-                            Take Quiz <ChevronRight className="size-3.5 ml-1" />
-                          </Link>
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        <div className="flex flex-wrap items-center gap-2">
+          {x.lockdownEnabled && (
+            <Badge variant="outline" className="gap-1">
+              <Lock className="size-3" /> Lockdown
+            </Badge>
+          )}
+          {a?.status === "graded" && x.showResults !== false ? (
+            <Badge>{percent(a.score ?? 0, a.maxScore || total || 100)}%</Badge>
+          ) : a?.status === "submitted" ? (
+            <Badge variant="secondary">Awaiting grading</Badge>
+          ) : null}
+          <Button asChild size="sm" variant={a ? "outline" : "default"} disabled={count === 0}>
+            <Link to="/quizzes/$quizId" params={{ quizId: x.id }}>
+              {notOpen
+                ? "Not open yet"
+                : closed
+                  ? "Closed"
+                  : exhausted
+                    ? "View result"
+                    : a
+                      ? "Retake"
+                      : "Start"}
+            </Link>
+          </Button>
         </div>
-      )}
+      </motion.div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Quizzes</h1>
+          <p className="text-sm text-muted-foreground">
+            Practise, take timed tests and see where you stand.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/leaderboard">Leaderboard</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/achievements">Achievements</Link>
+          </Button>
+        </div>
+      </header>
+
+      <Tabs defaultValue="available">
+        <TabsList>
+          <TabsTrigger value="available">To do ({available.length})</TabsTrigger>
+          <TabsTrigger value="done">Completed ({done.length})</TabsTrigger>
+        </TabsList>
+        <TabsContent value="available" className="mt-4 space-y-3">
+          {available.length ? (
+            <AnimatePresence mode="popLayout">{available.map(card)}</AnimatePresence>
+          ) : (
+            <EmptyState
+              title="Nothing to take right now"
+              body="New quizzes from your teachers will show up here."
+            />
+          )}
+        </TabsContent>
+        <TabsContent value="done" className="mt-4 space-y-3">
+          {done.length ? (
+            <AnimatePresence mode="popLayout">{done.map(card)}</AnimatePresence>
+          ) : (
+            <EmptyState title="No attempts yet" body="Your completed quizzes will be listed here." />
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

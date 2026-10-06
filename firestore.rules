@@ -114,6 +114,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /question_bank/{questionId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
+      allow create: if isSignedIn() && (isAdmin() || incoming().owner_id == request.auth.uid);
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
+    }
+
     match /rubrics/{rubricId} {
       allow read: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
       allow create: if isSignedIn() && (isAdmin() || incoming().owner_id == request.auth.uid);

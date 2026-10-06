@@ -74,3 +74,8 @@ export function makeJoinCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
+
+// Assignments created before drafts existed have no `published` field, so only an
+// explicit `false` counts as a draft.
+export const isPublished = (a: { published?: boolean | undefined }) => a.published !== false;
+export const isArchived = (a: { archived?: boolean | undefined }) => a.archived === true;

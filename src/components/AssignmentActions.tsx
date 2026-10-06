@@ -32,14 +32,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AssignmentDialog, type AssignmentDraft } from "@/components/AssignmentDialog";
+import { AssignmentDialog } from "@/components/AssignmentDialog";
+import type { Assignment } from "@/lib/firebase/models";
 
-export type AssignmentRow = AssignmentDraft & {
-  archived: boolean;
-  id: string;
-  class_id: string;
-  title: string;
-};
+export type AssignmentRow = Assignment;
 
 export function AssignmentActions({
   assignment,
@@ -75,14 +71,15 @@ export function AssignmentActions({
 
   const duplicate = useMutation({
     mutationFn: async () => {
+      const { id: _id, ...rest } = assignment;
       const id = await createAssignment({
-        classId: assignment.class_id,
+        ...rest,
         title: `${assignment.title} (copy)`.slice(0, 160),
-        description: assignment.instructions || "",
-        dueDate: assignment.due_date || new Date().toISOString(),
-        maxPoints: Number(assignment.max_marks) || 100,
+        dueDate: assignment.dueDate || new Date().toISOString(),
         createdBy: teacherId,
         createdAt: new Date().toISOString(),
+        published: false,
+        archived: false,
       });
       return id;
     },
@@ -103,7 +100,7 @@ export function AssignmentActions({
       setConfirmDelete(false);
       refresh();
       if (afterDelete) afterDelete();
-      else void navigate({ to: "/classes/$classId", params: { classId: assignment.class_id } });
+      else void navigate({ to: "/classes/$classId", params: { classId: assignment.classId } });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -185,7 +182,7 @@ export function AssignmentActions({
       <AssignmentDialog
         open={editOpen}
         onOpenChange={setEditOpen}
-        classId={assignment.class_id}
+        classId={assignment.classId}
         teacherId={teacherId}
         assignment={assignment}
       />

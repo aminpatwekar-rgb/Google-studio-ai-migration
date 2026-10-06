@@ -78,27 +78,66 @@ export interface AssignmentAttachment {
   createdAt: string;
 }
 
+/** Legacy ids (multiple_choice…) are still readable; new quizzes use the R1 type names. */
+export type StoredQuestionType =
+  | "mcq"
+  | "multi_select"
+  | "true_false"
+  | "fill_blank"
+  | "short_answer"
+  | "essay"
+  | "multiple_choice"
+  | "single_choice"
+  | "math_equation"
+  | "text";
+
 export interface QuizQuestion {
   id: string;
-  type: "multiple_choice" | "single_choice" | "math_equation" | "text";
+  type: StoredQuestionType;
+  /** Question text. Legacy quizzes call this `text`; new quizzes write both. */
   text: string;
+  prompt?: string;
   options?: string[];
   points: number;
+  difficulty?: "easy" | "medium" | "hard";
   correctAnswer?: string;
 }
+
+export type QuizKindId = "practice" | "timed" | "scheduled" | "exam";
 
 export interface Quiz {
   id: string;
   classId: string;
   title: string;
+  description?: string;
   questions: QuizQuestion[];
+  /** Minutes. 0 / undefined = untimed. */
   timeLimit: number;
   createdBy: string;
   createdAt: string;
+  kind?: QuizKindId;
+  maxAttempts?: number;
+  passingMarks?: number | null;
+  lockdownEnabled?: boolean;
+  randomizeQuestions?: boolean;
+  randomizeChoices?: boolean;
+  showResults?: boolean;
+  startAt?: string | null;
+  endAt?: string | null;
+  /** Quizzes created before drafts existed have no flag and count as published. */
+  published?: boolean;
+  archived?: boolean;
+  totalMarks?: number;
+  updatedAt?: string;
 }
 
+/** Private doc at quizzes/{id}/keys/answerKey — never readable by students. */
 export interface QuizAnswerKey {
+  /** Legacy single-answer map. */
   answers: Record<string, string | number>;
+  /** Accepted answers per question (supports multi-select and several accepted spellings). */
+  correct?: Record<string, string[]>;
+  explanations?: Record<string, string>;
   quizId: string;
   createdBy: string;
 }
@@ -115,6 +154,9 @@ export interface Submission {
   submittedAt: string;
   status: "submitted" | "graded";
   score: number | null;
+  maxScore?: number | null;
+  attemptNo?: number;
+  resultDetails?: Record<string, { answer: string[]; correct: boolean | null; marks: number }>;
   feedback: string | null;
   gradedBy: string | null;
   gradedAt: string | null;

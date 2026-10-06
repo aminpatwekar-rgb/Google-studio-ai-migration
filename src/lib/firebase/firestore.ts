@@ -212,7 +212,7 @@ export async function joinClassByCode(userId: string, joinCode: string, profile?
     if (teacherIds.includes(userId)) throw new Error("Class owners and co-teachers cannot join their own class.");
     if (role === "student") {
       if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim()) throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
-      if (classData.studentIds?.includes(userId)) return { id: classDoc.id, ...classData };
+      if (classData.studentIds?.includes(userId)) return { ...classData, id: classDoc.id };
       await updateDoc(doc(db, "classes", classDoc.id), { studentIds: arrayUnion(userId) });
     } else {
       await updateDoc(doc(db, "classes", classDoc.id), {
@@ -228,8 +228,8 @@ export async function joinClassByCode(userId: string, joinCode: string, profile?
       ...(profile?.srNo?.trim() ? { srNo: profile.srNo.trim().slice(0, 64) } : {}),
     });
     return {
-      id: classDoc.id,
       ...classData,
+      id: classDoc.id,
       studentIds: role === "student" ? [...(classData.studentIds || []), userId] : classData.studentIds || [],
       teacherIds: role === "student" ? teacherIds : [...new Set([...teacherIds, userId])],
     };
@@ -273,6 +273,53 @@ export async function updateClass(classId: string, data: Partial<ClassRoom>): Pr
     if (Object.keys(cleaned).length > 0) {
       await updateDoc(doc(db, "classes", classId), cleaned);
     }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+/** Admin-only: hand a class to another teacher. The previous owner is removed from the teacher list. */
+export async function transferClass(classId: string, newOwnerId: string): Promise<void> {
+  const path = `classes/${classId}`;
+  try {
+    const klass = await getClass(classId);
+    if (!klass) throw new Error("Class not found.");
+    const newOwner = await getUserProfile(newOwnerId);
+    if (!newOwner) throw new Error("That teacher no longer exists.");
+    const oldOwnerId = klass.teacherId;
+    const teacherIds = [
+      newOwnerId,
+      ...(klass.teacherIds ?? [oldOwnerId]).filter((id) => id !== oldOwnerId && id !== newOwnerId),
+    ];
+    const teacherNames: Record<string, string> = { ...(klass.teacherNames ?? {}) };
+    delete teacherNames[oldOwnerId];
+    teacherNames[newOwnerId] = newOwner.name || "Teacher";
+    await updateDoc(doc(db, "classes", classId), {
+      teacherId: newOwnerId,
+      teacherName: newOwner.name || "Teacher",
+      teacherIds,
+      teacherNames,
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+/** Admin-only (Firestore rules): everyone who can own or co-teach a class. */
+export async function getTeachers(): Promise<UserProfile[]> {
+  const users = await getAllUsers();
+  return users.filter((u) => u.role === "teacher" || u.role === "admin");
+}
+
+/** Remove one student from a class and from their own class list. */
+export async function removeStudentFromClass(classId: string, studentId: string): Promise<void> {
+  const path = `classes/${classId}`;
+  try {
+    const klass = await getClass(classId);
+    if (!klass) throw new Error("Class not found.");
+    await updateDoc(doc(db, "classes", classId), {
+      studentIds: (klass.studentIds ?? []).filter((id) => id !== studentId),
+    });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
   }
@@ -461,9 +508,15 @@ export async function getQuiz(
   }
 }
 
+export type QuizKeyExtras = {
+  correct?: Record<string, string[]>;
+  explanations?: Record<string, string>;
+};
+
 export async function createQuiz(
   quizData: Omit<Quiz, "id">,
   answers: Record<string, string | number>,
+  extras: QuizKeyExtras = {},
 ): Promise<string> {
   const path = "quizzes";
   try {
@@ -487,6 +540,8 @@ export async function createQuiz(
     const keyRef = doc(db, "quizzes", quizRef.id, "keys", "answerKey");
     const keyData: QuizAnswerKey = cleanFirestoreData({
       answers: answers || {},
+      correct: extras.correct ?? {},
+      explanations: extras.explanations ?? {},
       quizId: quizRef.id,
       createdBy: quizData.createdBy,
     });
@@ -502,10 +557,11 @@ export async function updateQuiz(
   quizId: string,
   quizData: Partial<Quiz>,
   answers?: Record<string, string | number>,
+  extras: QuizKeyExtras = {},
 ): Promise<void> {
   const path = `quizzes/${quizId}`;
   try {
-    let toUpdate = { ...quizData };
+    let toUpdate: Partial<Quiz> = { ...quizData, updatedAt: new Date().toISOString() };
     if (quizData.questions) {
       const sanitized = quizData.questions.map((q) => {
         const { correctAnswer, ...rest } = q;
@@ -520,7 +576,22 @@ export async function updateQuiz(
 
     if (answers) {
       const keyRef = doc(db, "quizzes", quizId, "keys", "answerKey");
-      await setDoc(keyRef, cleanFirestoreData({ answers, quizId }), { merge: true });
+      // Replace (not merge) the maps so deleted questions don't leave stale keys behind.
+      await setDoc(
+        keyRef,
+        cleanFirestoreData({
+          answers,
+          correct: extras.correct ?? {},
+          explanations: extras.explanations ?? {},
+          quizId,
+        }),
+        { merge: true },
+      );
+      await updateDoc(keyRef, {
+        answers,
+        correct: extras.correct ?? {},
+        explanations: extras.explanations ?? {},
+      });
     }
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
@@ -543,6 +614,18 @@ export async function getSubmissionsByRef(refId: string): Promise<Submission[]> 
   const path = "submissions";
   try {
     const q = query(collection(db, "submissions"), where("refId", "==", refId));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Submission, "id">) }));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+/** Teacher view: every submission in one class (used for per-student progress). */
+export async function getClassSubmissions(classId: string): Promise<Submission[]> {
+  const path = "submissions";
+  try {
+    const q = query(collection(db, "submissions"), where("classId", "==", classId));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Submission, "id">) }));
   } catch (err) {
@@ -775,5 +858,46 @@ export async function getUserPayments(userId: string): Promise<PaymentRecord[]> 
     return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, "id">) }));
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+
+// ================= QUESTION BANK =================
+
+export async function saveQuestionToBank(
+  ownerId: string,
+  q: {
+    type: string;
+    difficulty: string;
+    prompt: string;
+    options: string[];
+    correct: string[];
+    explanation: string;
+    points: number;
+  },
+  subject = "",
+): Promise<void> {
+  const path = "question_bank";
+  try {
+    const ref = doc(collection(db, "question_bank"));
+    await setDoc(
+      ref,
+      cleanFirestoreData({
+        id: ref.id,
+        owner_id: ownerId,
+        type: q.type,
+        difficulty: q.difficulty,
+        prompt: q.prompt.trim(),
+        options: q.options,
+        correct: q.correct,
+        explanation: q.explanation.trim() || null,
+        points: q.points,
+        subject,
+        tags: [],
+        updated_at: new Date().toISOString(),
+      }),
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
   }
 }

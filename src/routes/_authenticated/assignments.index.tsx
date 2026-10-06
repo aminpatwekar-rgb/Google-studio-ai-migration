@@ -3,7 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
-import { formatDue, type SubmissionStatus } from "@/lib/assignments";
+import {
+  bucketOf,
+  daysLate,
+  formatDue,
+  isArchived,
+  isPublished,
+  type SubmissionStatus,
+} from "@/lib/assignments";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,8 +23,8 @@ import {
   getTeacherGradingQueue,
 } from "@/lib/firebase/firestore";
 import type { Assignment, Submission } from "@/lib/firebase/models";
-import { Calendar, ChevronRight, Inbox } from "lucide-react";
 
+// The tab lives in the URL so dashboard cards can deep-link into a filter.
 type AssignmentTab = "all" | "upcoming" | "overdue" | "done" | "review";
 
 const VALID: AssignmentTab[] = ["all", "upcoming", "overdue", "done", "review"];
@@ -50,8 +57,8 @@ function Assignments() {
   const { effectiveRole } = useViewRole();
   const navigate = useNavigate({ from: "/assignments/" });
   const search = Route.useSearch();
-  const tab = search.tab ?? "all";
   const isTeacher = effectiveRole === "teacher" || effectiveRole === "admin";
+  const tab = search.tab ?? "upcoming";
 
   const q = useQuery({
     queryKey: ["all-assignments", user?.id, effectiveRole],
@@ -64,195 +71,194 @@ function Assignments() {
             ? await getTeacherClasses(user!.id)
             : await getStudentClasses(user!.id);
 
-      const classMap = new Map(classes.map((c) => [c.id, c.name]));
-      let list: (Assignment & { className?: string })[] = [];
-
-      for (const c of classes) {
-        const aList = await getAssignmentsByClass(c.id);
-        list = list.concat(aList.map((a) => ({ ...a, className: c.name })));
-      }
+      const perClass = await Promise.all(
+        classes.map(async (c) =>
+          (await getAssignmentsByClass(c.id)).map((a) => ({ ...a, className: c.name })),
+        ),
+      );
+      let list: (Assignment & { className?: string })[] = perClass.flat();
+      // Students never see drafts or archived work.
+      if (!isTeacher) list = list.filter((a) => isPublished(a) && !isArchived(a));
+      list.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 
       let byAssignment = new Map<string, Submission>();
       if (!isTeacher) {
         const subs = await getStudentSubmissions(user!.id);
         byAssignment = new Map(subs.map((s) => [s.refId, s]));
       }
-
-      return { list, byAssignment, classMap };
+      return { list, byAssignment };
     },
   });
 
-  const reviewQueue = useQuery({
-    enabled: isTeacher && Boolean(user),
-    queryKey: ["teacher-review-queue", user?.id],
+  // Submissions waiting for the teacher — the same rows the dashboard counts.
+  const review = useQuery({
+    enabled: isTeacher && Boolean(user) && q.isSuccess,
+    queryKey: ["teacher-review-queue", user?.id, q.dataUpdatedAt],
     queryFn: async () => {
       const classes =
-        effectiveRole === "admin"
-          ? await getAllClasses()
-          : await getTeacherClasses(user!.id);
-      const classIds = classes.map((c) => c.id);
-      const subs = await getTeacherGradingQueue(classIds);
-      return subs.filter((s) => s.status === "submitted");
+        effectiveRole === "admin" ? await getAllClasses() : await getTeacherClasses(user!.id);
+      const subs = await getTeacherGradingQueue(classes.map((c) => c.id));
+      const classNames = new Map(classes.map((c) => [c.id, c.name]));
+      const titles = new Map((q.data?.list ?? []).map((a) => [a.id, a.title]));
+      return subs
+        .filter((s) => s.type === "assignment" && s.status === "submitted")
+        .sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime())
+        .map((s) => ({
+          ...s,
+          assignmentTitle: titles.get(s.refId) ?? "Assignment",
+          className: classNames.get(s.classId) ?? "",
+        }));
     },
   });
 
   const list = q.data?.list ?? [];
-  const byAssignment = q.data?.byAssignment ?? new Map();
-
-  const filterByTab = (t: AssignmentTab) => {
-    if (t === "all") return list;
-    if (t === "done") {
-      return list.filter((a) => {
-        const s = byAssignment.get(a.id);
-        return s && ["submitted", "graded"].includes(s.status);
-      });
-    }
-    if (t === "overdue") {
-      return list.filter((a) => {
-        const s = byAssignment.get(a.id);
-        return (
-          a.dueDate &&
-          new Date(a.dueDate) < new Date() &&
-          (!s || s.status !== "graded")
-        );
-      });
-    }
-    if (t === "upcoming") {
-      return list.filter((a) => {
-        const s = byAssignment.get(a.id);
-        return (!a.dueDate || new Date(a.dueDate) >= new Date()) && (!s || s.status !== "graded");
-      });
-    }
-    return list;
+  const statusOf = (id: string): SubmissionStatus => {
+    const s = q.data?.byAssignment.get(id);
+    if (!s) return "not_started";
+    return s.status === "graded" ? "completed" : "submitted";
   };
 
-  const displayed = filterByTab(tab);
+  const live = list.filter((a) => !isArchived(a));
+  const groups = {
+    all: live,
+    upcoming: live.filter((a) => bucketOf(a.dueDate, statusOf(a.id)) === "upcoming"),
+    overdue: live.filter((a) => bucketOf(a.dueDate, statusOf(a.id)) === "overdue"),
+    done: isTeacher
+      ? list.filter((a) => isArchived(a))
+      : live.filter((a) => bucketOf(a.dueDate, statusOf(a.id)) === "done"),
+  };
+
+  const current: AssignmentTab = VALID.includes(tab) && (isTeacher || tab !== "all" && tab !== "review")
+    ? tab
+    : "upcoming";
+
+  function Grid({ items }: { items: typeof list }) {
+    if (!items.length)
+      return <p className="panel p-6 text-sm text-muted-foreground">Nothing here.</p>;
+    return (
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((a, i) => (
+          <motion.li
+            key={a.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.03, duration: 0.28 }}
+          >
+            <Link
+              to="/assignments/$assignmentId"
+              params={{ assignmentId: a.id }}
+              className="panel lift block h-full p-4 hover:lift-hover"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="truncate font-medium">{a.title}</p>
+                {!isTeacher && <StatusBadge status={statusOf(a.id)} />}
+                {isTeacher && !isPublished(a) && (
+                  <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                    Draft
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {a.className} · {a.subject || "General"}
+              </p>
+              <p className="mt-3 text-sm text-muted-foreground">Due {formatDue(a.dueDate)}</p>
+              {daysLate(a.dueDate) > 0 && !isTeacher && statusOf(a.id) === "not_started" && (
+                <p className="mt-1 text-sm font-medium text-destructive">Overdue</p>
+              )}
+            </Link>
+          </motion.li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <header className="border-b border-border/60 pb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Assignments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {isTeacher
-            ? "View and manage assignments created for your classes."
-            : "Keep track of active, upcoming, and completed tasks."}
+    <div className="space-y-8">
+      <header>
+        <h1 className="text-2xl sm:text-3xl font-semibold">Assignments</h1>
+        <p className="mt-1 text-muted-foreground">
+          {isTeacher ? "Everything you've posted." : "Everything assigned to you."}
         </p>
       </header>
 
-      <Tabs
-        value={tab}
-        onValueChange={(v) => navigate({ search: { tab: v as AssignmentTab } })}
-        className="space-y-4"
-      >
-        <TabsList>
-          <TabsTrigger value="all">All ({list.length})</TabsTrigger>
-          {!isTeacher && (
-            <>
-              <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-              <TabsTrigger value="overdue">Overdue</TabsTrigger>
-              <TabsTrigger value="done">Completed</TabsTrigger>
-            </>
-          )}
+      {q.isLoading ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-32 rounded-xl" />
+          ))}
+        </div>
+      ) : q.isError ? (
+        <div className="panel p-6 text-sm text-destructive">
+          Couldn't load assignments. {(q.error as Error).message}
+        </div>
+      ) : (
+        <Tabs
+          value={current}
+          onValueChange={(v) =>
+            void navigate({ to: ".", search: { tab: v as AssignmentTab }, replace: true })
+          }
+        >
+          <TabsList>
+            {isTeacher && <TabsTrigger value="all">All ({groups.all.length})</TabsTrigger>}
+            <TabsTrigger value="upcoming">Upcoming ({groups.upcoming.length})</TabsTrigger>
+            <TabsTrigger value="overdue">Overdue ({groups.overdue.length})</TabsTrigger>
+            {isTeacher && (
+              <TabsTrigger value="review">To review ({review.data?.length ?? 0})</TabsTrigger>
+            )}
+            <TabsTrigger value="done">
+              {isTeacher ? "Archive" : "Submitted"} ({groups.done.length})
+            </TabsTrigger>
+          </TabsList>
           {isTeacher && (
-            <TabsTrigger value="review">Needs Grading ({(reviewQueue.data || []).length})</TabsTrigger>
+            <TabsContent value="all" className="mt-5">
+              <Grid items={groups.all} />
+            </TabsContent>
           )}
-        </TabsList>
-
-        <TabsContent value={tab} className="space-y-3">
-          {tab === "review" && isTeacher ? (
-            (reviewQueue.data || []).length === 0 ? (
-              <div className="panel p-12 text-center border-dashed">
-                <Inbox className="mx-auto size-10 text-muted-foreground/60" />
-                <h3 className="mt-3 text-base font-semibold">Inbox Zero!</h3>
-                <p className="mt-1 text-xs text-muted-foreground">No submissions waiting for review.</p>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {(reviewQueue.data || []).map((sub) => (
-                  <Link
-                    key={sub.id}
-                    to="/grading"
-                    className="panel p-4 flex items-center justify-between bg-card hover:border-primary/40 transition-all hover:shadow-sm"
-                  >
-                    <div className="space-y-1">
-                      <p className="font-semibold text-sm text-foreground">
-                        {sub.studentName || "Student"} — Submission
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Submitted: {new Date(sub.submittedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <span className="text-xs font-medium text-warning bg-warning/10 px-2 py-0.5 rounded">
-                      Needs Grading
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )
-          ) : q.isLoading ? (
-            <div className="grid gap-3">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-20 rounded-xl" />
-              ))}
-            </div>
-          ) : displayed.length === 0 ? (
-            <div className="panel p-12 text-center border-dashed">
-              <Inbox className="mx-auto size-10 text-muted-foreground/60" />
-              <h3 className="mt-3 text-base font-semibold">No assignments found</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {isTeacher
-                  ? "Open a class to post an assignment."
-                  : "No assignments match this filter."}
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {displayed.map((a) => {
-                const sub = byAssignment.get(a.id);
-                const status: SubmissionStatus = sub
-                  ? sub.status === "graded"
-                    ? "completed"
-                    : "submitted"
-                  : "not_started";
-
-                return (
-                  <Link
-                    key={a.id}
-                    to="/assignments/$assignmentId"
-                    params={{ assignmentId: a.id }}
-                    className="panel p-4 flex items-center justify-between bg-card hover:border-primary/40 transition-all hover:shadow-sm"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-sm text-foreground hover:text-primary transition-colors">
-                          {a.title}
-                        </p>
-                        {a.className && (
-                          <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">
-                            {a.className}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="size-3" /> Due {formatDue(a.dueDate)}
-                        </span>
-                        <span>•</span>
-                        <span>{a.maxPoints} points</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      {!isTeacher && <StatusBadge status={status} />}
-                      <ChevronRight className="size-4 text-muted-foreground" />
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
+          <TabsContent value="upcoming" className="mt-5">
+            <Grid items={groups.upcoming} />
+          </TabsContent>
+          <TabsContent value="overdue" className="mt-5">
+            <Grid items={groups.overdue} />
+          </TabsContent>
+          {isTeacher && (
+            <TabsContent value="review" className="mt-5">
+              {review.isLoading ? (
+                <Skeleton className="h-24 w-full rounded-xl" />
+              ) : (review.data ?? []).length === 0 ? (
+                <p className="panel p-6 text-sm text-muted-foreground">
+                  Nothing waiting for review.
+                </p>
+              ) : (
+                <ul className="panel divide-y divide-border">
+                  {(review.data ?? []).map((s) => (
+                    <li key={s.id}>
+                      <Link
+                        to="/submissions/$submissionId"
+                        params={{ submissionId: s.id }}
+                        className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-muted/40"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {s.assignmentTitle}
+                            {s.studentName ? ` — ${s.studentName}` : ""}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {s.className} · {new Date(s.submittedAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <StatusBadge status="submitted" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </TabsContent>
           )}
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="done" className="mt-5">
+            <Grid items={groups.done} />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }

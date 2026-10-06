@@ -42,64 +42,60 @@ export const importStudentsFromCsv = createServerFn({ method: "POST" })
       email: normalizeEmail(row["email"] || row["Email"]),
       fullName: text(row["full_name"] || row["name"] || row["Name"] || row["FullName"]),
       rollNo: text(row["roll_no"] || row["RollNo"] || row["rollNo"]),
+      erNo: text(row["er_no"] || row["ErNo"] || row["erNo"]),
+      srNo: text(row["sr_no"] || row["SrNo"] || row["srNo"]),
     }));
 
-    const invalid = normalized.filter((row) => !row.email || !row.fullName);
-    if (invalid.length) {
-      throw new Error(
-        `Invalid rows found in CSV at line ${invalid[0]?.line}. Email and name are required.`,
-      );
-    }
-
-    const studentIds: string[] = klass.studentIds || [];
-    let addedCount = 0;
+    const { FieldValue } = await import("firebase-admin/firestore");
+    const studentIds = new Set<string>((klass["studentIds"] as string[] | undefined) ?? []);
+    const skippedRows: { line: number; reason: string }[] = [];
+    let imported = 0;
 
     for (const row of normalized) {
-      // Find or create user
-      const usersSnap = await adminDb
-        .collection("users")
-        .where("email", "==", row.email)
-        .limit(1)
-        .get();
-      let studentId = "";
-      if (!usersSnap.empty) {
-        studentId = usersSnap.docs[0]!.id;
-      } else {
-        const newRef = adminDb.collection("users").doc();
-        studentId = newRef.id;
-        await newRef.set({
-          id: studentId,
-          name: row.fullName,
-          email: row.email,
-          role: "student",
-          classIds: [data.classId],
-          createdAt: new Date().toISOString(),
-          rollNo: row.rollNo || null,
-        });
+      if (!row.email) {
+        skippedRows.push({ line: row.line, reason: "Email is required" });
+        continue;
+      }
+      // Only existing ONYX accounts can be enrolled: a student's class access is tied to their
+      // sign-in id, so we never invent placeholder accounts.
+      const usersSnap = await adminDb.collection("users").where("email", "==", row.email).limit(1).get();
+      const studentDoc = usersSnap.docs[0];
+      if (!studentDoc) {
+        skippedRows.push({ line: row.line, reason: `No ONYX account found for ${row.email}` });
+        continue;
+      }
+      if (studentDoc.data()["role"] !== "student") {
+        skippedRows.push({ line: row.line, reason: `${row.email} is not a student account` });
+        continue;
+      }
+      if (studentIds.has(studentDoc.id)) {
+        skippedRows.push({ line: row.line, reason: `${row.email} is already in this class` });
+        continue;
       }
 
-      if (!studentIds.includes(studentId)) {
-        studentIds.push(studentId);
-        addedCount++;
-        await adminDb
-          .collection("users")
-          .doc(studentId)
-          .set(
-            {
-              classIds: adminDb.constructor
-                ? [...(userData?.classIds || []), data.classId]
-                : [data.classId],
-            },
-            { merge: true },
-          );
-      }
+      studentIds.add(studentDoc.id);
+      await studentDoc.ref.set(
+        {
+          classIds: FieldValue.arrayUnion(data.classId),
+          ...(row.rollNo ? { rollNo: row.rollNo } : {}),
+          ...(row.erNo ? { erNo: row.erNo } : {}),
+          ...(row.srNo ? { srNo: row.srNo } : {}),
+        },
+        { merge: true },
+      );
+      imported += 1;
     }
 
-    await adminDb.collection("classes").doc(data.classId).update({ studentIds });
+    await adminDb
+      .collection("classes")
+      .doc(data.classId)
+      .update({ studentIds: Array.from(studentIds) });
 
     return {
-      importedCount: addedCount,
-      totalRows: normalized.length,
+      imported,
+      skipped: skippedRows.length,
+      total: normalized.length,
+      skippedRows,
     };
   });
 

@@ -1,99 +1,174 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
 import { adminDb } from "@/lib/firebase/admin";
+import { correctFor, normalizeType } from "@/lib/quiz/model";
+import { gradeAnswer } from "@/lib/quiz/types";
 
-type SubmitQuizInput = {
-  quizId: string;
-  answers: Record<string, string>;
-  submittedAt?: string;
+type SubmitInput = {
+  attemptId: string;
+  /** Latest answers from the browser; merged over what autosave already stored. */
+  answers?: Record<string, string[]>;
+  lockedReason?: string;
 };
 
-function normalize(value: unknown) {
-  return String(value ?? "").trim().toLowerCase();
+function asStringArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (v === undefined || v === null || v === "") return [];
+  return [String(v)];
 }
 
+/**
+ * Grades an attempt on the server. Auto-gradable answers are scored immediately; anything
+ * that needs a human (essay, short answer with no key) leaves the submission "submitted"
+ * so it shows up in the teacher's review queue.
+ */
 export const submitQuizAttempt = createServerFn({ method: "POST" })
   .middleware([requireFirebaseAuth])
-  .validator((input: SubmitQuizInput) => {
-    if (!input || typeof input.quizId !== "string" || !input.quizId.trim()) {
-      throw new Error("Quiz is required.");
+  .validator((input: SubmitInput) => {
+    if (!input || typeof input.attemptId !== "string" || !input.attemptId) {
+      throw new Error("Attempt is required.");
     }
-    if (!input.answers || typeof input.answers !== "object" || Array.isArray(input.answers)) {
-      throw new Error("Quiz answers are required.");
+    const answers: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(input.answers ?? {})) {
+      answers[String(k)] = asStringArray(v).map((s) => s.slice(0, 10_000));
     }
     return {
-      quizId: input.quizId.trim(),
-      answers: Object.fromEntries(
-        Object.entries(input.answers).map(([key, value]) => [String(key), String(value ?? "")]),
-      ),
-      submittedAt: input.submittedAt ? String(input.submittedAt) : new Date().toISOString(),
+      attemptId: input.attemptId,
+      answers,
+      lockedReason: input.lockedReason ? String(input.lockedReason).slice(0, 200) : undefined,
     };
   })
   .handler(async ({ data, context }) => {
-    const quizRef = adminDb.collection("quizzes").doc(data.quizId);
-    const quizSnap = await quizRef.get();
-    if (!quizSnap.exists) throw new Error("Quiz not found.");
-
-    const quiz = quizSnap.data()!;
-    const classId = String(quiz.classId ?? "");
-    const classSnap = await adminDb.collection("classes").doc(classId).get();
-    if (!classSnap.exists) throw new Error("Class not found.");
-
-    const classData = classSnap.data()!;
-    const studentIds = Array.isArray(classData.studentIds) ? classData.studentIds : [];
-    if (!studentIds.includes(context.userId)) {
-      throw new Error("You are not enrolled in this class.");
+    const attemptRef = adminDb.collection("quiz_attempts").doc(data.attemptId);
+    const attemptSnap = await attemptRef.get();
+    const attempt = attemptSnap.data();
+    if (!attemptSnap.exists || attempt?.["studentId"] !== context.userId) {
+      throw new Error("Attempt not found.");
     }
 
-    const existing = await adminDb
-      .collection("submissions")
-      .where("refId", "==", data.quizId)
-      .where("studentId", "==", context.userId)
-      .limit(1)
-      .get();
-    if (!existing.empty) throw new Error("You have already submitted this quiz.");
+    // Already submitted (double click, auto-submit racing a manual one): return the same result.
+    if (attempt["status"] !== "in_progress") {
+      const prior = await adminDb.collection("submissions").doc(String(attempt["submissionId"])).get();
+      const p = prior.data();
+      return {
+        submissionId: prior.id,
+        score: Number(p?.["score"] ?? 0),
+        maxScore: Number(p?.["maxScore"] ?? 0),
+        percentage: p?.["maxScore"] ? Math.round((Number(p["score"] ?? 0) / Number(p["maxScore"])) * 100) : 0,
+        needsManual: p?.["status"] !== "graded",
+        showResults: true,
+        late: false,
+      };
+    }
 
-    const keySnap = await quizRef.collection("keys").doc("answerKey").get();
-    if (!keySnap.exists) throw new Error("This quiz is not ready for submission.");
-    const keyData = keySnap.data()!;
-    const answerKey = (keyData.answers ?? {}) as Record<string, unknown>;
+    const quizId = String(attempt["quizId"]);
+    const quizRef = adminDb.collection("quizzes").doc(quizId);
+    const [quizSnap, keySnap] = await Promise.all([
+      quizRef.get(),
+      quizRef.collection("keys").doc("answerKey").get(),
+    ]);
+    if (!quizSnap.exists) throw new Error("Quiz not found.");
+    const quiz = quizSnap.data()!;
+    const key = (keySnap.data() ?? {}) as Parameters<typeof correctFor>[0];
 
-    const questions = Array.isArray(quiz.questions) ? quiz.questions : [];
+    const stored = (attempt["answers"] ?? {}) as Record<string, unknown>;
+    const responses: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(stored)) responses[k] = asStringArray(v);
+    for (const [k, v] of Object.entries(data.answers)) responses[k] = v;
+
+    const questions = (Array.isArray(quiz["questions"]) ? quiz["questions"] : []) as Record<string, unknown>[];
     let score = 0;
     let maxScore = 0;
-    const results: Record<string, { answer: string; correct: boolean; marks: number }> = {};
+    let needsManual = false;
+    const details: Record<string, { answer: string[]; correct: boolean | null; marks: number }> = {};
 
-    for (const question of questions) {
-      const id = String(question.id ?? "");
-      const points = Number(question.points ?? 0);
-      maxScore += Number.isFinite(points) ? Math.max(0, points) : 0;
-      const answer = String(data.answers[id] ?? "");
-      const expected = answerKey[id];
-      const correct = normalize(answer) !== "" && normalize(answer) === normalize(expected);
-      const marks = correct ? Math.max(0, points) : 0;
-      score += marks;
-      results[id] = { answer, correct, marks };
+    for (const q of questions) {
+      const id = String(q["id"]);
+      const points = Math.max(0, Number(q["points"]) || 0);
+      maxScore += points;
+      const given = responses[id] ?? [];
+      const result = gradeAnswer(
+        { type: normalizeType(String(q["type"])), correct: correctFor(key, id), points },
+        given,
+      );
+      if (result === null) {
+        needsManual = true;
+        details[id] = { answer: given, correct: null, marks: 0 };
+      } else {
+        score += result.points;
+        details[id] = { answer: given, correct: result.correct, marks: result.points };
+      }
     }
 
+    // The clock is anchored to the server, with a small grace period for network latency.
+    const limitMs = Number(quiz["timeLimit"]) > 0 ? Number(quiz["timeLimit"]) * 60_000 : null;
+    const late = limitMs !== null && Date.now() - new Date(String(attempt["startedAt"])).getTime() > limitMs + 90_000;
+
+    const studentSnap = await adminDb.collection("users").doc(context.userId).get();
+    const now = new Date().toISOString();
     const submissionRef = adminDb.collection("submissions").doc();
     await submissionRef.set({
       id: submissionRef.id,
       type: "quiz",
-      refId: data.quizId,
-      classId,
+      refId: quizId,
+      classId: String(quiz["classId"]),
       studentId: context.userId,
-      studentName: String((await adminDb.collection("users").doc(context.userId).get()).data()?.name ?? "Student"),
+      studentName: String(studentSnap.data()?.["name"] ?? "Student"),
       studentEmail: context.email ?? null,
-      answers: data.answers,
-      resultDetails: results,
-      submittedAt: data.submittedAt,
-      status: "graded",
-      score,
+      // Flat copy of the answers keeps older screens that read `answers[qid]` working.
+      answers: Object.fromEntries(Object.entries(responses).map(([k, v]) => [k, v.join(", ")])),
+      resultDetails: details,
+      attemptNo: Number(attempt["attemptNo"]) || 1,
+      attemptId: data.attemptId,
+      submittedAt: now,
+      status: needsManual ? "submitted" : "graded",
+      score: needsManual ? null : score,
+      partialScore: score,
+      pointsCredited: needsManual ? 0 : score,
       maxScore,
+      late,
+      violations: attempt["violations"] ?? [],
+      lockedReason: data.lockedReason ?? null,
       feedback: null,
-      gradedBy: "system",
-      gradedAt: new Date().toISOString(),
+      gradedBy: needsManual ? null : "auto_grader",
+      gradedAt: needsManual ? null : now,
     });
 
-    return { submissionId: submissionRef.id, score, maxScore, percentage: maxScore ? Math.round((score / maxScore) * 100) : 0 };
+    await attemptRef.update({
+      status: data.lockedReason ? "locked" : "submitted",
+      submissionId: submissionRef.id,
+      submittedAt: now,
+    });
+
+    if (!needsManual && score > 0) {
+      const leaderRef = adminDb.collection("leaderboard").doc(context.userId);
+      const leaderSnap = await leaderRef.get();
+      if (leaderSnap.exists) {
+        const cur = leaderSnap.data()!;
+        await leaderRef.update({
+          score: Number(cur["score"] ?? 0) + score,
+          totalSubmissions: Number(cur["totalSubmissions"] ?? 0) + 1,
+          updatedAt: now,
+        });
+      } else {
+        await leaderRef.set({
+          userId: context.userId,
+          userName: String(studentSnap.data()?.["name"] ?? "Student"),
+          score,
+          totalSubmissions: 1,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const showResults = quiz["showResults"] !== false;
+    return {
+      submissionId: submissionRef.id,
+      score: showResults ? score : null,
+      maxScore: showResults ? maxScore : null,
+      percentage: showResults && maxScore ? Math.round((score / maxScore) * 100) : null,
+      needsManual,
+      showResults,
+      late,
+    };
   });

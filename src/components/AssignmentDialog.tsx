@@ -126,7 +126,7 @@ export function AssignmentDialog({
   }
 
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (publish: boolean) => {
       if (!title.trim()) throw new Error("Title is required");
       if (!teacherId) throw new Error("You must be signed in as a teacher.");
       const dueIso = dueDate ? new Date(dueDate).toISOString() : new Date().toISOString();
@@ -149,12 +149,14 @@ export function AssignmentDialog({
 
       let id: string;
       if (editing && assignment) {
-        await updateAssignment(assignment.id, base);
+        await updateAssignment(assignment.id, { ...base, published: publish });
         id = assignment.id;
       } else {
         id = await createAssignment({
           classId,
           ...base,
+          published: publish,
+          archived: false,
           createdBy: teacherId,
           createdAt: new Date().toISOString(),
         });
@@ -179,8 +181,12 @@ export function AssignmentDialog({
       }
       return id;
     },
-    onSuccess: (id) => {
-      toast.success(editing ? "Assignment updated" : "Assignment created");
+    onSuccess: (id, publish) => {
+      toast.success(
+        publish
+          ? editing ? "Assignment updated" : "Assignment published"
+          : "Saved as draft — students can't see it yet",
+      );
       setFiles([]);
       onOpenChange(false);
       void qc.invalidateQueries({ queryKey: ["class-assignments"] });
@@ -299,9 +305,12 @@ export function AssignmentDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button variant="outline" onClick={() => save.mutate(false)} disabled={save.isPending}>
+            {editing ? "Save as draft" : "Save draft"}
+          </Button>
+          <Button onClick={() => save.mutate(true)} disabled={save.isPending}>
             {save.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
-            {editing ? "Save Changes" : "Post Assignment"}
+            {editing ? "Save & publish" : "Publish"}
           </Button>
         </DialogFooter>
       </DialogContent>

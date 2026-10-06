@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   collection,
   doc,
@@ -13,6 +14,9 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/lib/auth";
+import { getQuiz, updateQuiz } from "@/lib/firebase/firestore";
+import { fromDrafts, toDrafts } from "@/lib/quiz/model";
+import { tempId } from "@/lib/quiz/types";
 import { QUESTION_TYPES, DIFFICULTIES, type QuestionType, type Difficulty } from "@/lib/quiz/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +68,46 @@ function Page() {
   const [type, setType] = useState("all");
   const [difficulty, setDifficulty] = useState("all");
   const [open, setOpen] = useState(false);
+  const [addedIds, setAddedIds] = useState<string[]>([]);
+
+  // Opened from a quiz's "Add from Question Bank": each card gets an "Add to quiz" button.
+  const addToQuiz = useMutation({
+    mutationFn: async (q: QB) => {
+      if (!search.quizId) throw new Error("No quiz selected");
+      const res = await getQuiz(search.quizId, true);
+      if (!res) throw new Error("Quiz not found");
+      const drafts = [
+        ...toDrafts(res.quiz, res.answerKey),
+        {
+          id: tempId(),
+          type: q.type,
+          difficulty: q.difficulty,
+          prompt: q.prompt,
+          options: q.options ?? [],
+          correct: q.correct ?? [],
+          explanation: q.explanation ?? "",
+          points: Number(q.points) || 1,
+        },
+      ];
+      const stored = fromDrafts(drafts);
+      await updateQuiz(
+        search.quizId,
+        {
+          questions: stored.questions,
+          totalMarks: stored.questions.reduce((n, x) => n + x.points, 0),
+        },
+        stored.answers,
+        { correct: stored.correct, explanations: stored.explanations },
+      );
+      return q.id;
+    },
+    onSuccess: (id) => {
+      setAddedIds((prev) => [...prev, id]);
+      toast.success("Added to quiz");
+      void qc.invalidateQueries({ queryKey: ["quiz-edit", search.quizId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const [editing, setEditing] = useState<QB | null>(null);
   const [form, setForm] = useState({
     type: "mcq",
@@ -192,9 +236,22 @@ function Page() {
             Curate reusable questions for quizzes and assessments.
           </p>
         </div>
-        <Button onClick={() => reset()} className="gap-2">
-          <Plus className="size-4" /> Add Question
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {search.quizId && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                void navigate({ to: "/quizzes/$quizId/edit", params: { quizId: search.quizId! } })
+              }
+              className="gap-2"
+            >
+              <ArrowLeft className="size-4" /> Back to quiz
+            </Button>
+          )}
+          <Button onClick={() => reset()} className="gap-2">
+            <Plus className="size-4" /> Add Question
+          </Button>
+        </div>
       </header>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -227,8 +284,8 @@ function Page() {
           <SelectContent>
             <SelectItem value="all">All levels</SelectItem>
             {DIFFICULTIES.map((d) => (
-              <SelectItem key={d.value} value={d.value}>
-                {d.label}
+              <SelectItem key={d} value={d} className="capitalize">
+                {d}
               </SelectItem>
             ))}
           </SelectContent>
@@ -257,7 +314,18 @@ function Page() {
             </div>
             <div className="flex items-center justify-between pt-2 border-t text-xs">
               <span className="text-muted-foreground capitalize">{q.difficulty}</span>
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
+                {search.quizId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    disabled={addToQuiz.isPending || addedIds.includes(q.id)}
+                    onClick={() => addToQuiz.mutate(q)}
+                  >
+                    {addedIds.includes(q.id) ? "Added" : "Add to quiz"}
+                  </Button>
+                )}
                 <Button variant="ghost" size="icon" className="size-7" onClick={() => reset(q)}>
                   <Pencil className="size-3.5" />
                 </Button>
@@ -322,8 +390,8 @@ function Page() {
                   </SelectTrigger>
                   <SelectContent>
                     {DIFFICULTIES.map((d) => (
-                      <SelectItem key={d.value} value={d.value}>
-                        {d.label}
+                      <SelectItem key={d} value={d} className="capitalize">
+                        {d}
                       </SelectItem>
                     ))}
                   </SelectContent>
