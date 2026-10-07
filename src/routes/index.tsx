@@ -61,11 +61,14 @@ function Landing() {
   return (
     <div className="min-h-screen">
       <header className="glass sticky top-0 z-40 mx-auto flex max-w-6xl items-center justify-between rounded-b-2xl px-5 py-3">
-        <div className="flex items-center gap-2">
-          <span className="brand-gradient flex size-8 items-center justify-center rounded-lg text-sm font-bold text-primary-foreground">
-            O
-          </span>
-          <span className="font-semibold tracking-tight">ONYX</span>
+        <div className="flex items-center gap-2.5">
+          <img
+            src="/onyx-logo.jpg"
+            alt="ONYX"
+            className="size-8 rounded-full object-cover border border-border/80 shadow-xs"
+            referrerPolicy="no-referrer"
+          />
+          <span className="font-bold tracking-tight text-lg">ONYX</span>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">

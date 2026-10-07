@@ -6,10 +6,15 @@ type SubmitQuizInput = {
   quizId: string;
   answers: Record<string, string>;
   submittedAt?: string;
+  tabSwitchViolations?: number;
+  lockedOut?: boolean;
+  lockReason?: string;
 };
 
 function normalize(value: unknown) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 export const submitQuizAttempt = createServerFn({ method: "POST" })
@@ -27,6 +32,9 @@ export const submitQuizAttempt = createServerFn({ method: "POST" })
         Object.entries(input.answers).map(([key, value]) => [String(key), String(value ?? "")]),
       ),
       submittedAt: input.submittedAt ? String(input.submittedAt) : new Date().toISOString(),
+      tabSwitchViolations: Number(input.tabSwitchViolations || 0),
+      lockedOut: Boolean(input.lockedOut),
+      lockReason: input.lockReason ? String(input.lockReason) : undefined,
     };
   })
   .handler(async ({ data, context }) => {
@@ -82,18 +90,32 @@ export const submitQuizAttempt = createServerFn({ method: "POST" })
       refId: data.quizId,
       classId,
       studentId: context.userId,
-      studentName: String((await adminDb.collection("users").doc(context.userId).get()).data()?.name ?? "Student"),
+      studentName: String(
+        (await adminDb.collection("users").doc(context.userId).get()).data()?.name ?? "Student",
+      ),
       studentEmail: context.email ?? null,
       answers: data.answers,
       resultDetails: results,
+      tabSwitchViolations: data.tabSwitchViolations || 0,
+      lockedOut: data.lockedOut || false,
+      lockReason: data.lockReason || null,
       submittedAt: data.submittedAt,
       status: "graded",
       score,
       maxScore,
-      feedback: null,
+      feedback: data.lockedOut
+        ? `Automatic submission triggered: ${data.lockReason || "Student switched tabs or left exam window during locked final exam."}`
+        : null,
       gradedBy: "system",
       gradedAt: new Date().toISOString(),
     });
 
-    return { submissionId: submissionRef.id, score, maxScore, percentage: maxScore ? Math.round((score / maxScore) * 100) : 0 };
+    return {
+      submissionId: submissionRef.id,
+      score,
+      maxScore,
+      percentage: maxScore ? Math.round((score / maxScore) * 100) : 0,
+      lockedOut: data.lockedOut,
+      violations: data.tabSwitchViolations,
+    };
   });

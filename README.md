@@ -2,7 +2,7 @@
 
 Smart Assignment Submission & Tracking System
 
-A handwriting-first assignment platform for schools and colleges, with Teacher, Student, and Admin roles. Built on Lovable Cloud (database, auth, file storage) with a premium Notion/Linear-inspired UI, dark/light mode, and smooth motion.
+A handwriting-first assignment platform for schools and colleges, with Teacher, Student, Admin, and Super Admin roles. Built on Firebase (Authentication, Firestore, Firebase Storage) with TanStack Start, a premium Notion/Linear-inspired UI, dark/light mode, and smooth motion.
 
 This is a large platform, so it ships in phases. Each phase leaves a working app.
 

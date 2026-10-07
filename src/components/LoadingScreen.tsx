@@ -48,9 +48,12 @@ export function LoadingScreen({ className }: { className?: string }) {
           <div className="onyx-spin pointer-events-none absolute -inset-2.5 flex items-start justify-center rounded-2xl">
             <span className="size-2 -translate-y-1 rounded-full bg-primary shadow-[0_0_10px_var(--primary)]" />
           </div>
-          <div className="brand-gradient relative z-10 flex size-12 items-center justify-center rounded-full text-lg font-bold text-primary-foreground shadow-md ring-2 ring-background">
-            O
-          </div>
+          <img
+            src="/onyx-logo.jpg"
+            alt="ONYX"
+            className="relative z-10 size-12 rounded-full object-cover shadow-md ring-2 ring-background"
+            referrerPolicy="no-referrer"
+          />
         </div>
 
         {/* Wordmark letter-by-letter reveal */}

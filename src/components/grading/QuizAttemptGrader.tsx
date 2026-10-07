@@ -128,7 +128,10 @@ export function QuizAttemptGrader({
   const wasGraded = attempt.status === "graded";
 
   const setEntry = (id: string, patch: Partial<Entry>) =>
-    setEntries((prev) => ({ ...prev, [id]: { points: "", feedback: "", ...prev[id], ...patch } }));
+    setEntries((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { points: "", feedback: "" }), ...patch },
+    }));
 
   return (
     <div className="space-y-5">

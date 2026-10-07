@@ -35,10 +35,7 @@ function Page() {
       const from = new Date(cursor.getFullYear(), cursor.getMonth(), 1).getTime();
       const to = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1).getTime();
 
-      const [assignments, quizzes] = await Promise.all([
-        getAllAssignments(),
-        getAllQuizzes(),
-      ]);
+      const [assignments, quizzes] = await Promise.all([getAllAssignments(), getAllQuizzes()]);
 
       const events: EventRow[] = [];
 

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -8,6 +8,9 @@ import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { uploadClassResource, removeStorageFile } from "@/lib/firebase/storage";
+import { validateFile } from "@/lib/uploadConfig";
+import { UploadProgressBar, type UploadProgressInfo } from "@/components/ui/upload-progress";
 
 type Resource = {
   id: string;
@@ -16,7 +19,9 @@ type Resource = {
   file_name: string;
   mime_type: string | null;
   size_bytes: number | null;
-  data_url?: string;
+  storage_path?: string | null;
+  download_url?: string | null;
+  data_url?: string | null;
   created_at: string;
 };
 
@@ -27,19 +32,11 @@ function formatSize(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export function ClassResources({ classId, canManage }: { classId: string; canManage: boolean }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressInfo | null>(null);
 
   const resources = useQuery({
     queryKey: ["class-resources", classId],
@@ -60,15 +57,18 @@ export function ClassResources({ classId, canManage }: { classId: string; canMan
 
   const download = useMutation({
     mutationFn: async (resource: Resource) => {
-      if (resource.data_url) {
+      const url = resource.download_url || resource.data_url;
+      if (url) {
         const anchor = document.createElement("a");
-        anchor.href = resource.data_url;
+        anchor.href = url;
         anchor.download = resource.file_name;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
       } else {
-        toast.info("File preview not available directly");
+        toast.info("File download link not available");
       }
     },
     onError: (error: Error) => toast.error(error.message),
@@ -78,33 +78,52 @@ export function ClassResources({ classId, canManage }: { classId: string; canMan
     mutationFn: async (files: File[]) => {
       if (!user) throw new Error("Sign in to upload resources");
       for (const file of files) {
-        let dataUrl: string | undefined = undefined;
-        if (file.size < 800_000) {
-          dataUrl = await fileToDataUrl(file);
-        }
+        const uploaded = await uploadClassResource(classId, file, user.id, (info) => {
+          setUploadProgress({
+            state: info.state,
+            progressPercent: info.progressPercent,
+            fileName: info.fileName,
+            originalSize: info.originalSize,
+            compressedSize: info.compressedSize,
+            savingsLabel: info.savingsLabel,
+            error: info.state === "error" ? info.message : undefined,
+          });
+        });
         const ref = doc(collection(db, "classes", classId, "resources"));
         await setDoc(ref, {
           id: ref.id,
           class_id: classId,
           uploader_id: user.id,
-          file_name: file.name,
-          mime_type: file.type || null,
-          size_bytes: file.size,
-          data_url: dataUrl || null,
+          file_name: uploaded.fileName,
+          mime_type: uploaded.mimeType,
+          size_bytes: uploaded.sizeBytes,
+          storage_path: uploaded.path,
+          download_url: uploaded.url,
           created_at: new Date().toISOString(),
         });
       }
     },
     onSuccess: () => {
-      toast.success("Resources uploaded");
+      toast.success("Resources uploaded to Firebase Storage");
+      setUploadProgress(null);
       if (inputRef.current) inputRef.current.value = "";
       void queryClient.invalidateQueries({ queryKey: ["class-resources", classId] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      setUploadProgress(null);
+      toast.error(error.message);
+    },
   });
 
   const remove = useMutation({
     mutationFn: async (resource: Resource) => {
+      if (resource.storage_path) {
+        try {
+          await removeStorageFile(resource.storage_path);
+        } catch {
+          // Ignore if already deleted from storage
+        }
+      }
       await deleteDoc(doc(db, "classes", classId, "resources", resource.id));
     },
     onSuccess: () => {
@@ -114,10 +133,15 @@ export function ClassResources({ classId, canManage }: { classId: string; canMan
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const isUploading =
+    upload.isPending ||
+    (uploadProgress !== null &&
+      (uploadProgress.state === "compressing" || uploadProgress.state === "uploading"));
+
   return (
     <div className="space-y-4">
       {canManage && (
-        <div className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+        <div className="panel flex flex-col gap-3 p-4">
           <div className="min-w-0 flex-1 space-y-1.5">
             <label htmlFor="class-resources" className="text-sm font-medium">
               Add class files
@@ -127,18 +151,24 @@ export function ClassResources({ classId, canManage }: { classId: string; canMan
               id="class-resources"
               type="file"
               multiple
-              disabled={upload.isPending}
+              accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.ppt,.pptx,.txt,.mp4"
+              disabled={isUploading}
               onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                if (files.length) upload.mutate(files);
+                const incoming = Array.from(event.target.files ?? []);
+                const valid: File[] = [];
+                for (const f of incoming) {
+                  try {
+                    validateFile(f);
+                    valid.push(f);
+                  } catch (err: any) {
+                    toast.error(err.message || "File validation failed");
+                  }
+                }
+                if (valid.length) upload.mutate(valid);
               }}
             />
           </div>
-          {upload.isPending && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Uploading…
-            </div>
-          )}
+          <UploadProgressBar info={uploadProgress} className="mt-1" />
         </div>
       )}
 

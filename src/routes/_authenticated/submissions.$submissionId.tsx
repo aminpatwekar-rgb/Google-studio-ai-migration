@@ -35,7 +35,8 @@ function ReviewSubmission() {
   const [feedback, setFeedback] = useState("");
 
   const q = useQuery({
-    queryKey: ["submission", submissionId],
+    queryKey: ["submission", submissionId, user?.id],
+    enabled: Boolean(user?.id && submissionId),
     queryFn: async () => {
       const sub = await getSubmission(submissionId);
       if (!sub) return null;
@@ -104,9 +105,7 @@ function ReviewSubmission() {
 
         <span
           className={`text-xs font-semibold px-3 py-1 rounded-full ${
-            sub.status === "graded"
-              ? "bg-success/10 text-success"
-              : "bg-warning/10 text-warning"
+            sub.status === "graded" ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
           }`}
         >
           {sub.status === "graded" ? `Graded: ${sub.score} pts` : "Awaiting Marks"}
@@ -131,7 +130,9 @@ function ReviewSubmission() {
           <h2 className="text-base font-semibold text-foreground">Teacher Evaluation</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="marks">Marks Awarded {assignment ? `(Max: ${assignment.maxPoints})` : ""}</Label>
+              <Label htmlFor="marks">
+                Marks Awarded {assignment ? `(Max: ${assignment.maxPoints})` : ""}
+              </Label>
               <Input
                 id="marks"
                 type="number"
@@ -156,8 +157,16 @@ function ReviewSubmission() {
           </div>
 
           <div className="flex justify-end pt-2">
-            <Button onClick={() => save.mutate()} disabled={save.isPending} className="gap-1.5 press">
-              {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            <Button
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+              className="gap-1.5 press"
+            >
+              {save.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
               Save Grade & Feedback
             </Button>
           </div>
@@ -166,7 +175,9 @@ function ReviewSubmission() {
         sub.feedback && (
           <section className="panel p-6 bg-card border-border space-y-2">
             <h2 className="text-base font-semibold text-primary">Teacher Feedback</h2>
-            <p className="text-sm bg-primary/5 p-4 rounded-lg border border-primary/20">{sub.feedback}</p>
+            <p className="text-sm bg-primary/5 p-4 rounded-lg border border-primary/20">
+              {sub.feedback}
+            </p>
           </section>
         )
       )}

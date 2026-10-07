@@ -6,7 +6,12 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
-import { getTeacherClasses, getStudentClasses, getClass, getUserProfile } from "@/lib/firebase/firestore";
+import {
+  getTeacherClasses,
+  getStudentClasses,
+  getClass,
+  getUserProfile,
+} from "@/lib/firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { PlanGate } from "@/components/PlanGate";
 import { Input } from "@/components/ui/input";
@@ -113,7 +118,9 @@ function Page() {
           <div>
             <h1 className="text-2xl font-semibold">Attendance Register</h1>
             <p className="text-sm text-muted-foreground">
-              {isTeacher ? "Mark daily roll call and track student presence." : "Your class attendance log."}
+              {isTeacher
+                ? "Mark daily roll call and track student presence."
+                : "Your class attendance log."}
             </p>
           </div>
           {isTeacher && classId && (

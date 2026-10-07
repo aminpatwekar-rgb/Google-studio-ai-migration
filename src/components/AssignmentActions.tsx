@@ -37,7 +37,7 @@ import { AssignmentDialog, type AssignmentDraft } from "@/components/AssignmentD
 export type AssignmentRow = AssignmentDraft & {
   archived: boolean;
   id: string;
-  class_id: string;
+  classId: string;
   title: string;
 };
 
@@ -76,11 +76,11 @@ export function AssignmentActions({
   const duplicate = useMutation({
     mutationFn: async () => {
       const id = await createAssignment({
-        classId: assignment.class_id,
+        classId: assignment.classId,
         title: `${assignment.title} (copy)`.slice(0, 160),
-        description: assignment.instructions || "",
-        dueDate: assignment.due_date || new Date().toISOString(),
-        maxPoints: Number(assignment.max_marks) || 100,
+        description: assignment.description || "",
+        dueDate: assignment.dueDate || new Date().toISOString(),
+        maxPoints: Number(assignment.maxPoints) || 100,
         createdBy: teacherId,
         createdAt: new Date().toISOString(),
       });
@@ -103,7 +103,7 @@ export function AssignmentActions({
       setConfirmDelete(false);
       refresh();
       if (afterDelete) afterDelete();
-      else void navigate({ to: "/classes/$classId", params: { classId: assignment.class_id } });
+      else void navigate({ to: "/classes/$classId", params: { classId: assignment.classId } });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -185,7 +185,7 @@ export function AssignmentActions({
       <AssignmentDialog
         open={editOpen}
         onOpenChange={setEditOpen}
-        classId={assignment.class_id}
+        classId={assignment.classId}
         teacherId={teacherId}
         assignment={assignment}
       />

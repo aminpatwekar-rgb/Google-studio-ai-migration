@@ -18,11 +18,10 @@ import { cn } from "@/lib/utils";
 
 import { ProfileSettingsCard } from "@/components/settings/ProfileSettingsCard";
 import { NotificationPreferencesCard } from "@/components/settings/NotificationPreferencesCard";
-import { RolePreferencesCard } from "@/components/settings/RolePreferencesCard";
 import { AccountSettingsCard } from "@/components/settings/AccountSettingsCard";
-import { SubscriptionSettingsCard } from "@/components/settings/SubscriptionSettingsCard";
 import { PlanUsageCard } from "@/components/settings/PlanUsageCard";
 import { BusinessModelPlans } from "@/components/settings/BusinessModelPlans";
+import { RolePreferencesCard } from "@/components/settings/RolePreferencesCard";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({
@@ -279,7 +278,6 @@ function SettingsPage() {
         <div className="space-y-3">
           <PlanUsageCard />
           <BusinessModelPlans />
-          <SubscriptionSettingsCard />
         </div>
       </section>
 

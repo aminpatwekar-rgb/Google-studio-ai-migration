@@ -98,9 +98,9 @@ function Page() {
     return (questions.data ?? []).filter(
       (x) =>
         (!q ||
-          x.prompt.toLowerCase().includes(q) ||
+          (x.prompt || "").toLowerCase().includes(q) ||
           (x.subject ?? "").toLowerCase().includes(q) ||
-          (x.tags ?? []).some((t) => t.toLowerCase().includes(q))) &&
+          (x.tags ?? []).some((t) => (t || "").toLowerCase().includes(q))) &&
         (type === "all" || x.type === type) &&
         (difficulty === "all" || x.difficulty === difficulty),
     );
@@ -227,7 +227,7 @@ function Page() {
           <SelectContent>
             <SelectItem value="all">All levels</SelectItem>
             {DIFFICULTIES.map((d) => (
-              <SelectItem key={d.value} value={d.value}>
+              <SelectItem key={d.value} value={d.value} className="capitalize">
                 {d.label}
               </SelectItem>
             ))}
@@ -243,13 +243,17 @@ function Page() {
                 <Badge variant="outline" className="text-[11px] capitalize">
                   {q.type.replace(/_/g, " ")}
                 </Badge>
-                <span className="text-xs text-muted-foreground">{q.points} pt{q.points === 1 ? "" : "s"}</span>
+                <span className="text-xs text-muted-foreground">
+                  {q.points} pt{q.points === 1 ? "" : "s"}
+                </span>
               </div>
               <p className="text-sm font-medium line-clamp-3">{q.prompt}</p>
               {q.options && q.options.length > 0 && (
                 <ul className="text-xs text-muted-foreground space-y-1 pl-4 list-disc">
                   {q.options.slice(0, 3).map((opt, i) => (
-                    <li key={i} className="truncate">{opt}</li>
+                    <li key={i} className="truncate">
+                      {opt}
+                    </li>
                   ))}
                   {q.options.length > 3 && <li>+{q.options.length - 3} more</li>}
                 </ul>
@@ -289,10 +293,11 @@ function Page() {
             <div className="space-y-1">
               <Label>Prompt</Label>
               <Textarea
-                rows={3}
+                autoResize
                 placeholder="Question text (LaTeX math supported e.g. $E=mc^2$)"
                 value={form.prompt}
                 onChange={(e) => setForm({ ...form, prompt: e.target.value })}
+                className="overflow-hidden"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -322,7 +327,7 @@ function Page() {
                   </SelectTrigger>
                   <SelectContent>
                     {DIFFICULTIES.map((d) => (
-                      <SelectItem key={d.value} value={d.value}>
+                      <SelectItem key={d.value} value={d.value} className="capitalize">
                         {d.label}
                       </SelectItem>
                     ))}

@@ -42,7 +42,9 @@ function LeaderboardPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border/60 pb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Leaderboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+            Leaderboard
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Academic points and achievements earned across assignments and quizzes.
           </p>

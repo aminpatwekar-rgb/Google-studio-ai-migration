@@ -111,7 +111,7 @@ export const RichMathEditor = forwardRef<RichMathEditorHandle, Props>(function R
         },
         handleKeyDown: (_view, event) => {
           const mod = event.ctrlKey || event.metaKey;
-          const key = event.key.toLowerCase();
+          const key = (event.key || "").toLowerCase();
           if (mod && ["v", "c", "x"].includes(key)) {
             event.preventDefault();
             onBlockedRef.current(`key-${key}`, "That shortcut");

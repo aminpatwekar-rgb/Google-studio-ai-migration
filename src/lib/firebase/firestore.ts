@@ -27,6 +27,9 @@ import type {
   PaymentRecord,
   AppRole,
   OnyxNotification,
+  Project,
+  ProjectTask,
+  AuditLogEntry,
 } from "./models";
 
 /** Recursively removes undefined properties so Firestore never throws `Unsupported field value: undefined` */
@@ -101,7 +104,7 @@ export async function getAllUsers(): Promise<UserProfile[]> {
   const path = "users";
   try {
     const snap = await getDocs(collection(db, "users"));
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserProfile, "id">) }));
+    return snap.docs.map((d) => ({ ...(d.data() as Omit<UserProfile, "id">), id: d.id }));
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }
@@ -116,6 +119,15 @@ export async function updateUserRole(targetUid: string, role: AppRole): Promise<
   }
 }
 
+export async function deleteUserProfile(targetUid: string): Promise<void> {
+  const path = `users/${targetUid}`;
+  try {
+    await deleteDoc(doc(db, "users", targetUid));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
 // ================= CLASSES =================
 
 export async function getClass(classId: string): Promise<ClassRoom | null> {
@@ -123,7 +135,7 @@ export async function getClass(classId: string): Promise<ClassRoom | null> {
   try {
     const snap = await getDoc(doc(db, "classes", classId));
     if (!snap.exists()) return null;
-    return { id: snap.id, ...(snap.data() as Omit<ClassRoom, "id">) };
+    return { ...(snap.data() as Omit<ClassRoom, "id">), id: snap.id };
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, path);
   }
@@ -138,7 +150,8 @@ export async function getTeacherClasses(teacherId: string): Promise<ClassRoom[]>
     ]);
     const byId = new Map<string, ClassRoom>();
     for (const snap of [ownerSnap, memberSnap]) {
-      for (const d of snap.docs) byId.set(d.id, { id: d.id, ...(d.data() as Omit<ClassRoom, "id">) });
+      for (const d of snap.docs)
+        byId.set(d.id, { ...(d.data() as Omit<ClassRoom, "id">), id: d.id });
     }
     return Array.from(byId.values());
   } catch (err) {
@@ -151,7 +164,7 @@ export async function getStudentClasses(studentId: string): Promise<ClassRoom[]>
   try {
     const q = query(collection(db, "classes"), where("studentIds", "array-contains", studentId));
     const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClassRoom, "id">) }));
+    return snap.docs.map((d) => ({ ...(d.data() as Omit<ClassRoom, "id">), id: d.id }));
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }
@@ -161,7 +174,7 @@ export async function getAllClasses(): Promise<ClassRoom[]> {
   const path = "classes";
   try {
     const snap = await getDocs(collection(db, "classes"));
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClassRoom, "id">) }));
+    return snap.docs.map((d) => ({ ...(d.data() as Omit<ClassRoom, "id">), id: d.id }));
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }
@@ -192,7 +205,12 @@ export async function createClass(data: Omit<ClassRoom, "id">): Promise<string> 
   }
 }
 
-export async function joinClassByCode(userId: string, joinCode: string, profile?: { fullName?: string; rollNo?: string; erNo?: string; srNo?: string }, role: "student" | "teacher" | "admin" = "student"): Promise<ClassRoom> {
+export async function joinClassByCode(
+  userId: string,
+  joinCode: string,
+  profile?: { fullName?: string; rollNo?: string; erNo?: string; srNo?: string },
+  role: "student" | "teacher" | "admin" = "student",
+): Promise<ClassRoom> {
   const path = "classes";
   try {
     const q = query(
@@ -209,10 +227,12 @@ export async function joinClassByCode(userId: string, joinCode: string, profile?
     }
     const classData = classDoc.data() as ClassRoom;
     const teacherIds = classData.teacherIds || [classData.teacherId];
-    if (teacherIds.includes(userId)) throw new Error("Class owners and co-teachers cannot join their own class.");
+    if (teacherIds.includes(userId))
+      throw new Error("Class owners and co-teachers cannot join their own class.");
     if (role === "student") {
-      if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim()) throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
-      if (classData.studentIds?.includes(userId)) return { id: classDoc.id, ...classData };
+      if (!profile?.rollNo?.trim() && !profile?.erNo?.trim() && !profile?.srNo?.trim())
+        throw new Error("Add at least one Roll No, ER No, or SR No before joining a class.");
+      if (classData.studentIds?.includes(userId)) return { ...classData, id: classDoc.id };
       await updateDoc(doc(db, "classes", classDoc.id), { studentIds: arrayUnion(userId) });
     } else {
       await updateDoc(doc(db, "classes", classDoc.id), {
@@ -228,9 +248,10 @@ export async function joinClassByCode(userId: string, joinCode: string, profile?
       ...(profile?.srNo?.trim() ? { srNo: profile.srNo.trim().slice(0, 64) } : {}),
     });
     return {
-      id: classDoc.id,
       ...classData,
-      studentIds: role === "student" ? [...(classData.studentIds || []), userId] : classData.studentIds || [],
+      id: classDoc.id,
+      studentIds:
+        role === "student" ? [...(classData.studentIds || []), userId] : classData.studentIds || [],
       teacherIds: role === "student" ? teacherIds : [...new Set([...teacherIds, userId])],
     };
   } catch (err) {
@@ -238,7 +259,11 @@ export async function joinClassByCode(userId: string, joinCode: string, profile?
   }
 }
 
-export async function addCoTeacher(classId: string, teacherId: string, teacherName: string): Promise<void> {
+export async function addCoTeacher(
+  classId: string,
+  teacherId: string,
+  teacherName: string,
+): Promise<void> {
   const path = `classes/${classId}`;
   try {
     await updateDoc(doc(db, "classes", classId), {
@@ -287,7 +312,6 @@ export async function deleteClass(classId: string): Promise<void> {
   }
 }
 
-
 // ================= CLASS ROSTER =================
 
 export async function getClassRoster(classId: string): Promise<UserProfile[]> {
@@ -315,7 +339,10 @@ export async function createNotification(input: Omit<OnyxNotification, "id">): P
   return ref.id;
 }
 
-export async function getNotifications(userId: string, limitCount = 50): Promise<OnyxNotification[]> {
+export async function getNotifications(
+  userId: string,
+  limitCount = 50,
+): Promise<OnyxNotification[]> {
   const q = query(
     collection(db, "notifications"),
     where("userId", "==", userId),
@@ -331,7 +358,13 @@ export async function markNotificationRead(notificationId: string): Promise<void
 }
 
 export async function markAllNotificationsRead(userId: string): Promise<void> {
-  const snap = await getDocs(query(collection(db, "notifications"), where("userId", "==", userId), where("read", "==", false)));
+  const snap = await getDocs(
+    query(
+      collection(db, "notifications"),
+      where("userId", "==", userId),
+      where("read", "==", false),
+    ),
+  );
   if (snap.empty) return;
   await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { read: true })));
 }
@@ -615,14 +648,16 @@ export async function gradeSubmission(
 ): Promise<void> {
   const path = `submissions/${submissionId}`;
   try {
-    if (!Number.isFinite(score) || score < 0) throw new Error("Score must be a valid non-negative number.");
+    if (!Number.isFinite(score) || score < 0)
+      throw new Error("Score must be a valid non-negative number.");
     const snap = await getDoc(doc(db, "submissions", submissionId));
     if (!snap.exists()) throw new Error("Submission not found.");
     const sub = snap.data() as Submission;
     if (sub.type === "assignment") {
       const assignment = await getAssignment(sub.refId);
       if (!assignment) throw new Error("Assignment not found.");
-      if (score > assignment.maxPoints) throw new Error(`Score cannot exceed ${assignment.maxPoints} points.`);
+      if (score > assignment.maxPoints)
+        throw new Error(`Score cannot exceed ${assignment.maxPoints} points.`);
     }
     const gradedAt = new Date().toISOString();
     await updateDoc(doc(db, "submissions", submissionId), {
@@ -773,6 +808,95 @@ export async function getUserPayments(userId: string): Promise<PaymentRecord[]> 
     const q = query(collection(db, "payments"), where("userId", "==", userId));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, "id">) }));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+// ================= PROJECTS =================
+
+export async function getProjectsByClass(classId: string): Promise<Project[]> {
+  const path = "projects";
+  try {
+    const q = query(collection(db, "projects"), where("classId", "==", classId));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Project, "id">) }));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+export async function getAllProjects(): Promise<Project[]> {
+  const path = "projects";
+  try {
+    const snap = await getDocs(collection(db, "projects"));
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Project, "id">) }));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+  }
+}
+
+export async function getProject(projectId: string): Promise<Project | null> {
+  const path = `projects/${projectId}`;
+  try {
+    const snap = await getDoc(doc(db, "projects", projectId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...(snap.data() as Omit<Project, "id">) };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+  }
+}
+
+export async function createProject(data: Omit<Project, "id">): Promise<string> {
+  const path = "projects";
+  try {
+    const ref = doc(collection(db, "projects"));
+    const project: Project = cleanFirestoreData({
+      ...data,
+      id: ref.id,
+      tasks: data.tasks || [],
+      milestones: data.milestones || [],
+      progressPercent: data.progressPercent ?? 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(ref, project);
+    return ref.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function updateProject(projectId: string, updates: Partial<Project>): Promise<void> {
+  const path = `projects/${projectId}`;
+  try {
+    const cleaned = cleanFirestoreData({
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+    await updateDoc(doc(db, "projects", projectId), cleaned);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const path = `projects/${projectId}`;
+  try {
+    await deleteDoc(doc(db, "projects", projectId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+// ================= AUDIT LOGS =================
+
+export async function getAuditLogs(limitCount = 100): Promise<AuditLogEntry[]> {
+  const path = "audit_logs";
+  try {
+    const q = query(collection(db, "audit_logs"), orderBy("timestamp", "desc"), limit(limitCount));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AuditLogEntry, "id">) }));
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
   }

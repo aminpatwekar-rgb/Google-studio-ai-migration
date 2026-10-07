@@ -2,7 +2,19 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ClipboardList, Plus, Timer, Trash2, ChevronRight } from "lucide-react";
+import {
+  ClipboardList,
+  Plus,
+  Timer,
+  Trash2,
+  ChevronRight,
+  Sparkles,
+  ShieldAlert,
+  Clock,
+  Calendar,
+  BookOpen,
+  GraduationCap,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
 import { Button } from "@/components/ui/button";
@@ -12,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -33,7 +46,7 @@ import {
   deleteQuiz,
   getStudentSubmissions,
 } from "@/lib/firebase/firestore";
-import type { Quiz } from "@/lib/firebase/models";
+import type { Quiz, QuizKind } from "@/lib/firebase/models";
 
 export const Route = createFileRoute("/_authenticated/quizzes/")({
   head: () => ({
@@ -56,7 +69,10 @@ function QuizzesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [classId, setClassId] = useState("");
+  const [quizType, setQuizType] = useState<QuizKind>("practice");
   const [timeLimit, setTimeLimit] = useState("20");
+  const [scheduledStart, setScheduledStart] = useState("");
+  const [scheduledEnd, setScheduledEnd] = useState("");
 
   const classes = useQuery({
     queryKey: ["quizzes-classes", user?.id, effectiveRole],
@@ -96,60 +112,34 @@ function QuizzesPage() {
   const newQuiz = useMutation({
     mutationFn: async () => {
       if (!title.trim()) throw new Error("Title is required");
-      if (!classId) throw new Error("Please select a class");
+      if (!classId) throw new Error("Please choose a class");
 
-      // Sample template quiz with math equation questions
-      const sampleQuestions = [
-        {
-          id: "q1",
-          type: "single_choice" as const,
-          text: "What is the solution to $x^2 - 16 = 0$?",
-          options: ["$x = \\pm 4$", "$x = 4$", "$x = 16$", "$x = \\pm 2$"],
-          points: 10,
-          correctAnswer: "$x = \\pm 4$",
-        },
-        {
-          id: "q2",
-          type: "single_choice" as const,
-          text: "Calculate the derivative: $\\frac{d}{dx}(3x^3 + 2x)$",
-          options: ["$9x^2 + 2$", "$3x^2 + 2$", "$6x + 2$", "$9x^3$"],
-          points: 10,
-          correctAnswer: "$9x^2 + 2$",
-        },
-        {
-          id: "q3",
-          type: "text" as const,
-          text: "State Pythagoras' Theorem in mathematical notation.",
-          points: 10,
-          correctAnswer: "a^2 + b^2 = c^2",
-        },
-      ];
-
-      const answerKey: Record<string, string | number> = {
-        q1: "$x = \\pm 4$",
-        q2: "$9x^2 + 2$",
-        q3: "a^2 + b^2 = c^2",
-      };
+      const isExam = quizType === "exam";
 
       const quizId = await createQuiz(
         {
           classId,
           title: title.trim(),
-          questions: sampleQuestions,
-          timeLimit: parseInt(timeLimit, 10) || 20,
+          kind: quizType,
+          questions: [],
+          timeLimit: quizType === "practice" ? 0 : parseInt(timeLimit, 10) || 20,
+          scheduledStart: quizType === "scheduled" && scheduledStart ? scheduledStart : null,
+          scheduledEnd: quizType === "scheduled" && scheduledEnd ? scheduledEnd : null,
+          lockdown: isExam,
           createdBy: user!.id,
           createdAt: new Date().toISOString(),
         },
-        answerKey,
+        {},
       );
 
       return quizId;
     },
     onSuccess: (quizId) => {
-      toast.success("Quiz created!");
+      toast.success("Quiz created successfully!");
       setCreateOpen(false);
       setTitle("");
       setClassId("");
+      setQuizType("practice");
       void qc.invalidateQueries({ queryKey: ["all-quizzes"] });
       void navigate({ to: "/quizzes/$quizId/edit", params: { quizId } });
     },
@@ -176,164 +166,251 @@ function QuizzesPage() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Quizzes</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {isTeacher
-              ? "Create interactive quizzes and exams with KaTeX math equation support."
+              ? "Create interactive quizzes, timed tests, and secure final exams."
               : "Complete quizzes for your classes and test your knowledge."}
           </p>
         </div>
 
         {isTeacher && (
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="gap-1.5 press">
-                <Plus className="size-4" /> New Quiz
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create a New Quiz</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="q-title">Quiz Title</Label>
-                  <Input
-                    id="q-title"
-                    placeholder="e.g. Midterm Calculus Quiz"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    required
-                  />
+          <div className="flex items-center gap-2">
+            {/* Create a quiz dialog */}
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="default" className="gap-1.5 press font-medium shadow-sm">
+                  <Plus className="size-4" /> Create a quiz
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md bg-card border-border p-6">
+                <DialogHeader className="space-y-1">
+                  <DialogTitle className="text-xl font-bold tracking-tight text-foreground">
+                    Create a quiz
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    Start blank, then generate questions with AI or pull them from your question
+                    bank.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 py-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="q-title" className="text-xs font-medium text-foreground">
+                      Title
+                    </Label>
+                    <Input
+                      id="q-title"
+                      placeholder="Chapter 4 — Thermodynamics"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      required
+                      className="bg-card text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium text-foreground">Class</Label>
+                    <Select value={classId} onValueChange={setClassId}>
+                      <SelectTrigger className="bg-card text-sm">
+                        <SelectValue placeholder="Choose a class" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(classes.data || []).map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium text-foreground">Type</Label>
+                    <Select value={quizType} onValueChange={(val: QuizKind) => setQuizType(val)}>
+                      <SelectTrigger className="bg-card text-sm capitalize">
+                        <SelectValue placeholder="Practice" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="practice">Practice</SelectItem>
+                        <SelectItem value="timed">Timed quiz</SelectItem>
+                        <SelectItem value="scheduled">Scheduled quiz</SelectItem>
+                        <SelectItem value="exam">Final exam</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Time limit for timed quiz or final exam */}
+                  {(quizType === "timed" || quizType === "exam") && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="q-time" className="text-xs font-medium text-foreground">
+                        Time Limit (minutes)
+                      </Label>
+                      <Input
+                        id="q-time"
+                        type="number"
+                        min={1}
+                        max={300}
+                        value={timeLimit}
+                        onChange={(e) => setTimeLimit(e.target.value)}
+                        className="bg-card text-sm"
+                      />
+                    </div>
+                  )}
+
+                  {/* Scheduled quiz start & end */}
+                  {quizType === "scheduled" && (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Start Window</Label>
+                        <Input
+                          type="datetime-local"
+                          value={scheduledStart}
+                          onChange={(e) => setScheduledStart(e.target.value)}
+                          className="bg-card text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">End Window</Label>
+                        <Input
+                          type="datetime-local"
+                          value={scheduledEnd}
+                          onChange={(e) => setScheduledEnd(e.target.value)}
+                          className="bg-card text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Final Exam Lockdown Notice */}
+                  {quizType === "exam" && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-foreground space-y-1">
+                      <div className="flex items-center gap-1.5 font-semibold text-destructive">
+                        <ShieldAlert className="size-4" /> Strict Exam Lockdown Active
+                      </div>
+                      <p className="text-muted-foreground">
+                        Students are forbidden from switching tabs or leaving the exam window. Any
+                        tab switch will trigger immediate lockout and auto-submission.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label>Class</Label>
-                  <Select value={classId} onValueChange={setClassId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select class" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(classes.data || []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="q-time">Time Limit (minutes)</Label>
-                  <Input
-                    id="q-time"
-                    type="number"
-                    min={5}
-                    max={180}
-                    value={timeLimit}
-                    onChange={(e) => setTimeLimit(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={() => newQuiz.mutate()} disabled={newQuiz.isPending}>
-                  {newQuiz.isPending ? "Creating..." : "Create & Edit Questions"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter className="pt-2">
+                  <Button
+                    onClick={() => newQuiz.mutate()}
+                    disabled={newQuiz.isPending || !title.trim() || !classId}
+                    className="w-full sm:w-auto bg-primary text-primary-foreground font-medium text-xs px-5 h-9"
+                  >
+                    {newQuiz.isPending ? "Creating..." : "Create & add questions"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         )}
       </header>
 
       {quizzes.isLoading ? (
-        <div className="grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
+            <Skeleton key={i} className="h-32 rounded-xl" />
           ))}
         </div>
       ) : list.length === 0 ? (
-        <div className="panel p-12 text-center border-dashed">
-          <ClipboardList className="mx-auto size-10 text-muted-foreground/60" />
-          <h3 className="mt-3 text-base font-semibold">No quizzes found</h3>
+        <div className="panel p-8 text-center border-dashed">
+          <ClipboardList className="mx-auto size-12 text-muted-foreground/60" />
+          <h3 className="mt-3 text-sm font-semibold text-foreground">No quizzes yet</h3>
           <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
             {isTeacher
-              ? "Create your first quiz to test your students with multiple choice and math equations."
-              : "Your teacher has not published any quizzes for your classes yet."}
+              ? "Create your first quiz with LaTeX formulas, practice mode, or locked final exams."
+              : "Your teacher hasn't published any quizzes yet."}
           </p>
+          {isTeacher && (
+            <div className="mt-4 flex justify-center gap-2">
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                Create a quiz
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="grid gap-3">
-          {list.map((q) => {
-            const sub = studentSubmissions.data?.get(q.id);
-            const isCompleted = Boolean(sub);
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {list.map((qz) => {
+            const sub = studentSubmissions.data?.get(qz.id);
+            const isCompleted = sub?.status === "graded";
+            const kind = qz.kind || "practice";
 
             return (
               <div
-                key={q.id}
-                className="panel p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-card hover:border-primary/40 transition-all hover:shadow-sm"
+                key={qz.id}
+                className="panel p-5 flex flex-col justify-between bg-card hover:border-primary/40 transition-all hover:shadow-md group space-y-4"
               >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-base text-foreground">{q.title}</p>
-                    {q.className && (
-                      <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">
-                        {q.className}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Timer className="size-3.5" /> {q.timeLimit || 20} mins
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-semibold text-primary">
+                      {qz.className || "Class"}
                     </span>
-                    <span>•</span>
-                    <span>{(q.questions || []).length} questions</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {isTeacher ? (
-                    <>
-                      <Button asChild size="sm" variant="outline">
-                        <Link to="/quizzes/$quizId/edit" params={{ quizId: q.id }}>
-                          Edit Questions
-                        </Link>
-                      </Button>
-                      <Button asChild size="sm">
-                        <Link to="/quizzes/$quizId" params={{ quizId: q.id }}>
-                          View
-                        </Link>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:bg-destructive/10"
-                        onClick={() => removeQuiz.mutate(q.id)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      {isCompleted ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-success bg-success/10 px-2.5 py-1 rounded">
-                            Score: {sub?.score} pts
-                          </span>
-                          <Button asChild size="sm" variant="outline">
-                            <Link to="/quizzes/$quizId" params={{ quizId: q.id }}>
-                              Review
-                            </Link>
-                          </Button>
-                        </div>
+                    <div className="flex items-center gap-1.5">
+                      {kind === "exam" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-destructive/15 px-2 py-0.5 text-[11px] font-semibold text-destructive border border-destructive/20">
+                          <ShieldAlert className="size-3" /> Final Exam
+                        </span>
+                      ) : kind === "timed" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-warning border border-warning/20">
+                          <Timer className="size-3" /> Timed ({qz.timeLimit}m)
+                        </span>
+                      ) : kind === "scheduled" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-info/15 px-2 py-0.5 text-[11px] font-semibold text-info border border-info/20">
+                          <Calendar className="size-3" /> Scheduled
+                        </span>
                       ) : (
-                        <Button asChild size="sm">
-                          <Link to="/quizzes/$quizId/take" params={{ quizId: q.id }}>
-                            Take Quiz <ChevronRight className="size-3.5 ml-1" />
-                          </Link>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground border border-border">
+                          <BookOpen className="size-3" /> Practice
+                        </span>
+                      )}
+
+                      {isTeacher && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeQuiz.mutate(qz.id)}
+                          disabled={removeQuiz.isPending}
+                        >
+                          <Trash2 className="size-3.5" />
                         </Button>
                       )}
-                    </>
+                    </div>
+                  </div>
+
+                  <h3 className="text-base font-bold text-foreground mt-2 group-hover:text-primary transition-colors">
+                    {qz.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {(qz.questions || []).length} question
+                    {(qz.questions || []).length === 1 ? "" : "s"}
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t flex items-center justify-between">
+                  {!isTeacher && sub ? (
+                    <div className="text-xs">
+                      <span className="font-semibold text-success">Completed: </span>
+                      <span className="font-bold">{sub.score} pts</span>
+                    </div>
+                  ) : !isTeacher ? (
+                    <span className="text-xs text-warning font-medium">Not attempted</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Ready for students</span>
                   )}
+
+                  <Button asChild size="sm" variant={isCompleted ? "outline" : "default"}>
+                    <Link
+                      to={isTeacher ? "/quizzes/$quizId/edit" : "/quizzes/$quizId"}
+                      params={{ quizId: qz.id }}
+                    >
+                      {isTeacher ? "Edit Quiz" : isCompleted ? "View Result" : "Take Quiz"}
+                      <ChevronRight className="size-3.5 ml-1" />
+                    </Link>
+                  </Button>
                 </div>
               </div>
             );

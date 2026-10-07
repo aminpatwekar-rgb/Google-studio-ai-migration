@@ -17,6 +17,7 @@ export interface UserProfile {
   name: string;
   email: string | null;
   role: AppRole;
+  isSuperAdmin?: boolean;
   classIds: string[];
   createdAt: string;
   plan?: string;
@@ -41,6 +42,7 @@ export interface ClassRoom {
   subject?: string;
   section?: string;
   archived?: boolean;
+  bannerUrl?: string | null;
 }
 
 export interface Assignment {
@@ -64,6 +66,7 @@ export interface Assignment {
   imagesAllowed?: boolean;
   rubricId?: string | null;
   referenceLinks?: string[];
+  filesAllowed?: boolean;
 }
 
 export interface AssignmentAttachment {
@@ -85,14 +88,21 @@ export interface QuizQuestion {
   options?: string[];
   points: number;
   correctAnswer?: string;
+  imageUrl?: string;
 }
+
+export type QuizKind = "practice" | "timed" | "scheduled" | "exam";
 
 export interface Quiz {
   id: string;
   classId: string;
   title: string;
+  kind?: QuizKind;
   questions: QuizQuestion[];
   timeLimit: number;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
+  lockdown?: boolean;
   createdBy: string;
   createdAt: string;
 }
@@ -159,4 +169,48 @@ export interface PaymentRecord {
   plan: string;
   status: "created" | "authorized" | "captured" | "failed";
   createdAt: string;
+}
+
+export interface ProjectTask {
+  id: string;
+  title: string;
+  description?: string;
+  assignedTo?: string; // userId
+  status: "todo" | "in_progress" | "completed";
+  dueDate?: string | null;
+}
+
+export interface ProjectMilestone {
+  id: string;
+  title: string;
+  dueDate: string;
+  completed: boolean;
+}
+
+export interface Project {
+  id: string;
+  classId: string;
+  title: string;
+  description: string;
+  createdBy: string;
+  memberIds: string[]; // student UIDs in group
+  status: "planning" | "in_progress" | "review" | "completed";
+  tasks: ProjectTask[];
+  milestones: ProjectMilestone[];
+  progressPercent: number;
+  dueDate?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorId: string;
+  actorEmail?: string | null;
+  action: string;
+  targetType: "user" | "class" | "assignment" | "quiz" | "role" | "system" | "payment";
+  targetId?: string;
+  details?: Record<string, any>;
+  ipAddress?: string;
+  timestamp: string;
 }

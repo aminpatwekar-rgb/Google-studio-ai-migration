@@ -139,5 +139,5 @@ export const saveQuizAttemptGrade = createServerFn({ method: "POST" })
       });
     }
 
-    return { ok: true, score: totalScore };
+    return { ok: true, score: totalScore, finished: true, max: 100 };
   });

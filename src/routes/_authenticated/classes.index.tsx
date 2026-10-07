@@ -76,6 +76,7 @@ function Classes() {
     queryKey: ["classes", user?.id, effectiveRole],
     enabled: Boolean(user && effectiveRole),
     queryFn: async () => {
+      if (!effectiveRole) return [];
       if (effectiveRole === "admin") {
         return await getAllClasses();
       }
@@ -117,9 +118,15 @@ function Classes() {
       if (!code.trim()) throw new Error("Enter the join code");
       if (effectiveRole === "student") {
         if (!studentName.trim()) throw new Error("Full name is required");
-        if (!rollNo.trim() && !erNo.trim() && !srNo.trim()) throw new Error("Enter at least one Roll No, ER No, or SR No.");
+        if (!rollNo.trim() && !erNo.trim() && !srNo.trim())
+          throw new Error("Enter at least one Roll No, ER No, or SR No.");
       }
-      return await joinClassByCode(user!.id, code.trim(), { fullName: studentName, rollNo, erNo, srNo }, effectiveRole);
+      return await joinClassByCode(
+        user!.id,
+        code.trim(),
+        { fullName: studentName, rollNo, erNo, srNo },
+        effectiveRole || "student",
+      );
     },
     onSuccess: (res) => {
       toast.success(`Joined ${res.name}!`);
@@ -145,7 +152,9 @@ function Classes() {
         </div>
 
         <div className="flex items-center gap-2">
-          {(effectiveRole === "student" || effectiveRole === "teacher" || effectiveRole === "admin") && (
+          {(effectiveRole === "student" ||
+            effectiveRole === "teacher" ||
+            effectiveRole === "admin") && (
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-1.5 press">
@@ -168,19 +177,57 @@ function Classes() {
                       maxLength={12}
                     />
                   </div>
-                  {effectiveRole === "student" && <div className="space-y-1.5">
-                    <Label htmlFor="studentName">Full Name</Label>
-                    <Input id="studentName" value={studentName} onChange={(e) => setStudentName(e.target.value)} placeholder="Your full name" />
-                  </div>}
-                  {effectiveRole === "student" && <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="space-y-1.5"><Label htmlFor="rollNo">Roll No</Label><Input id="rollNo" value={rollNo} onChange={(e) => setRollNo(e.target.value)} placeholder="Optional" /></div>
-                    <div className="space-y-1.5"><Label htmlFor="erNo">ER No</Label><Input id="erNo" value={erNo} onChange={(e) => setErNo(e.target.value)} placeholder="Optional" /></div>
-                    <div className="space-y-1.5"><Label htmlFor="srNo">SR No</Label><Input id="srNo" value={srNo} onChange={(e) => setSrNo(e.target.value)} placeholder="Optional" /></div>
-                  </div>}
-                  {effectiveRole === "student" && <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
-                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <span>Enter at least one academic identifier. Classmates see your name and identifier, not your email.</span>
-                  </div>}
+                  {effectiveRole === "student" && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="studentName">Full Name</Label>
+                      <Input
+                        id="studentName"
+                        value={studentName}
+                        onChange={(e) => setStudentName(e.target.value)}
+                        placeholder="Your full name"
+                      />
+                    </div>
+                  )}
+                  {effectiveRole === "student" && (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="rollNo">Roll No</Label>
+                        <Input
+                          id="rollNo"
+                          value={rollNo}
+                          onChange={(e) => setRollNo(e.target.value)}
+                          placeholder="Optional"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="erNo">ER No</Label>
+                        <Input
+                          id="erNo"
+                          value={erNo}
+                          onChange={(e) => setErNo(e.target.value)}
+                          placeholder="Optional"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="srNo">SR No</Label>
+                        <Input
+                          id="srNo"
+                          value={srNo}
+                          onChange={(e) => setSrNo(e.target.value)}
+                          placeholder="Optional"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {effectiveRole === "student" && (
+                    <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+                      <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+                      <span>
+                        Enter at least one academic identifier. Classmates see your name and
+                        identifier, not your email.
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setJoinOpen(false)}>

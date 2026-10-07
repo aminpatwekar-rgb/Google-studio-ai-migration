@@ -3,14 +3,22 @@ import { z } from "zod";
 import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
 import { adminDb } from "@/lib/firebase/admin";
 
-const TEST_AMOUNT_PAISE = 100;
 const CURRENCY = "INR";
+
+const PLAN_PRICES_PAISE: Record<string, { amount: number; name: string }> = {
+  pro: { amount: 49900, name: "Pro" },
+  institution: { amount: 199900, name: "Institution" },
+};
+
+const orderSchema = z.object({
+  planCode: z.string().min(1),
+});
 
 const paymentVerificationSchema = z.object({
   razorpayOrderId: z.string().min(1).max(128),
   razorpayPaymentId: z.string().min(1).max(128),
   razorpaySignature: z.string().regex(/^[a-f0-9]{64}$/i),
-  plan: z.string().optional(),
+  planCode: z.string().min(1),
 });
 
 function getCredentials() {
@@ -20,7 +28,7 @@ function getCredentials() {
 
   if (!keyId || !keySecret) {
     throw new Error(
-      "Razorpay checkout is not configured yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+      "Razorpay checkout is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET environment variables.",
     );
   }
 
@@ -42,10 +50,16 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
     .join("");
 }
 
-export const createRazorpayTestOrder = createServerFn({ method: "POST" })
+export const createRazorpayOrder = createServerFn({ method: "POST" })
   .middleware([requireFirebaseAuth])
-  .handler(async ({ context }) => {
+  .validator((input: { planCode: string }) => orderSchema.parse(input))
+  .handler(async ({ data, context }) => {
     const { keyId, keySecret } = getCredentials();
+    const planInfo = PLAN_PRICES_PAISE[data.planCode.toLowerCase()];
+    if (!planInfo) {
+      throw new Error("Invalid plan selected for checkout.");
+    }
+
     const receipt = `onyx_${context.userId.replaceAll("-", "").slice(0, 12)}_${Date.now()}`;
     const authorization = btoa(`${keyId}:${keySecret}`);
     const response = await fetch("https://api.razorpay.com/v1/orders", {
@@ -54,14 +68,19 @@ export const createRazorpayTestOrder = createServerFn({ method: "POST" })
         Authorization: `Basic ${authorization}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ amount: TEST_AMOUNT_PAISE, currency: CURRENCY, receipt }),
+      body: JSON.stringify({
+        amount: planInfo.amount,
+        currency: CURRENCY,
+        receipt,
+        notes: { userId: context.userId, planCode: data.planCode },
+      }),
     });
 
     if (!response.ok) {
       console.error("Razorpay order creation failed", response.status, await response.text());
       throw new Error(
         response.status === 401
-          ? "Razorpay rejected the credentials."
+          ? "Razorpay rejected the API keys. Please verify RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET."
           : "Could not start Razorpay checkout. Please try again.",
       );
     }
@@ -69,7 +88,7 @@ export const createRazorpayTestOrder = createServerFn({ method: "POST" })
     const order = z
       .object({
         id: z.string().min(1),
-        amount: z.number().int().min(TEST_AMOUNT_PAISE),
+        amount: z.number().int().min(100),
         currency: z.literal(CURRENCY),
       })
       .parse(await response.json());
@@ -79,44 +98,46 @@ export const createRazorpayTestOrder = createServerFn({ method: "POST" })
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
+      planCode: data.planCode,
+      planName: planInfo.name,
     };
   });
 
-export const verifyRazorpayTestPayment = createServerFn({ method: "POST" })
+export const verifyRazorpayPayment = createServerFn({ method: "POST" })
   .middleware([requireFirebaseAuth])
-  .inputValidator((input) => paymentVerificationSchema.parse(input))
+  .validator((input: any) => paymentVerificationSchema.parse(input))
   .handler(async ({ data, context }) => {
     const { keySecret } = getCredentials();
     const message = `${data.razorpayOrderId}|${data.razorpayPaymentId}`;
     const expectedHex = await hmacSha256Hex(keySecret, message);
     const valid = expectedHex.toLowerCase() === data.razorpaySignature.toLowerCase();
 
-    if (!valid) throw new Error("Razorpay could not verify this payment.");
+    if (!valid) throw new Error("Razorpay payment verification failed: invalid signature.");
 
-    const chosenPlan = data.plan || "Pro";
+    const planInfo = PLAN_PRICES_PAISE[data.planCode.toLowerCase()] || {
+      name: data.planCode,
+      amount: 0,
+    };
 
-    // Write payment record and update user plan in Firestore from server
-    try {
-      const now = new Date().toISOString();
-      const paymentRecord = {
-        id: data.razorpayPaymentId,
-        userId: context.userId,
-        razorpayOrderId: data.razorpayOrderId,
-        razorpayPaymentId: data.razorpayPaymentId,
-        amount: TEST_AMOUNT_PAISE / 100,
-        plan: chosenPlan,
-        status: "captured",
-        createdAt: now,
-      };
+    // Write payment record and update user plan in Firestore from server only
+    const now = new Date().toISOString();
+    const paymentRecord = {
+      id: data.razorpayPaymentId,
+      userId: context.userId,
+      razorpayOrderId: data.razorpayOrderId,
+      razorpayPaymentId: data.razorpayPaymentId,
+      amount: planInfo.amount / 100,
+      plan: planInfo.name,
+      planCode: data.planCode,
+      status: "captured",
+      createdAt: now,
+    };
 
-      await adminDb.collection("payments").doc(data.razorpayPaymentId).set(paymentRecord);
-      await adminDb
-        .collection("users")
-        .doc(context.userId)
-        .set({ plan: chosenPlan }, { merge: true });
-    } catch (err) {
-      console.error("Failed to write payment record in Firestore:", err);
-    }
+    await adminDb.collection("payments").doc(data.razorpayPaymentId).set(paymentRecord);
+    await adminDb
+      .collection("users")
+      .doc(context.userId)
+      .set({ plan: planInfo.name }, { merge: true });
 
-    return { verified: true as const, paymentId: data.razorpayPaymentId, plan: chosenPlan };
+    return { verified: true as const, paymentId: data.razorpayPaymentId, plan: planInfo.name };
   });

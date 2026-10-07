@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Building, IdCard, Loader2, User } from "lucide-react";
+import { Building, Camera, IdCard, Loader2, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { updateUserProfile } from "@/lib/firebase/firestore";
+import { uploadProfileAvatar } from "@/lib/firebase/storage";
+import { validateFile } from "@/lib/uploadConfig";
+import { UploadProgressBar, type UploadProgressInfo } from "@/components/ui/upload-progress";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function ProfileSettingsCard() {
   const { user, profile, role, refresh } = useAuth();
@@ -17,6 +20,8 @@ export function ProfileSettingsCard() {
   const [erNo, setErNo] = useState(profile?.er_no ?? "");
   const [srNo, setSrNo] = useState(profile?.sr_no ?? "");
   const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressInfo | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -36,6 +41,42 @@ export function ProfileSettingsCard() {
 
   const isTeacherOrAdmin = role === "teacher" || role === "admin";
   const isStudent = role === "student";
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    try {
+      validateFile(file);
+      if (!file.type.startsWith("image/")) {
+        toast.error("Please select an image file (JPEG, PNG, WebP).");
+        return;
+      }
+
+      const uploaded = await uploadProfileAvatar(file, user.id, (info) => {
+        setUploadProgress({
+          state: info.state,
+          progressPercent: info.progressPercent,
+          fileName: info.fileName,
+          originalSize: info.originalSize,
+          compressedSize: info.compressedSize,
+          savingsLabel: info.savingsLabel,
+          error: info.state === "error" ? info.message : undefined,
+        });
+      });
+
+      await updateUserProfile(user.id, {
+        avatarUrl: uploaded.url,
+      });
+
+      await refresh();
+      toast.success("Profile photo updated successfully!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload photo");
+    } finally {
+      setTimeout(() => setUploadProgress(null), 3000);
+      e.target.value = "";
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -81,21 +122,51 @@ export function ProfileSettingsCard() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSave} className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Avatar className="size-16 border border-border/60">
-              <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <p className="text-sm font-semibold text-foreground">
-                {profile?.full_name || "Account Profile"}
-              </p>
-              <p className="text-xs text-muted-foreground capitalize">
-                {role ?? "User"} · Avatar generated from initials
-              </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 rounded-xl border border-border/60 bg-muted/20">
+            <div className="flex items-center gap-4">
+              <Avatar className="size-16 border border-border/60">
+                {profile?.avatarUrl && (
+                  <AvatarImage src={profile.avatarUrl} alt={profile.full_name || "Profile"} />
+                )}
+                <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  {profile?.full_name || "Account Profile"}
+                </p>
+                <p className="text-xs text-muted-foreground capitalize">
+                  {role ?? "User"} · Auto-compressed WebP photo
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={
+                  uploadProgress !== null &&
+                  (uploadProgress.state === "compressing" || uploadProgress.state === "uploading")
+                }
+                className="gap-1.5 text-xs h-8"
+              >
+                <Camera className="size-3.5" /> Change Photo
+              </Button>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleAvatarUpload}
+              />
             </div>
           </div>
+
+          <UploadProgressBar info={uploadProgress} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -194,7 +265,15 @@ export function ProfileSettingsCard() {
           )}
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={saving} className="gap-2">
+            <Button
+              type="submit"
+              disabled={
+                saving ||
+                (uploadProgress !== null &&
+                  (uploadProgress.state === "compressing" || uploadProgress.state === "uploading"))
+              }
+              className="gap-2"
+            >
               {saving && <Loader2 className="size-4 animate-spin" />}
               {saving ? "Saving changes..." : "Save Profile"}
             </Button>

@@ -45,7 +45,7 @@ export const getQuizReviewAttempts = createServerFn({ method: "GET" })
     const attempts: QuizReviewAttempt[] = [];
     const names: Record<string, string> = {};
 
-    subDocs.forEach((d) => {
+    subDocs.forEach((d: any) => {
       const s = d.data();
       attempts.push({
         id: d.id,

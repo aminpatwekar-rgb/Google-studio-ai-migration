@@ -48,7 +48,7 @@ export const importClassStudents = createServerFn({ method: "POST" })
     const userDocs = await adminDb.collection("users").get();
     const byEmail = new Map<string, { id: string; name: string }>();
 
-    userDocs.forEach((d) => {
+    userDocs.forEach((d: any) => {
       const u = d.data();
       if (u.email) {
         byEmail.set(u.email.toLowerCase(), { id: d.id, name: u.name });

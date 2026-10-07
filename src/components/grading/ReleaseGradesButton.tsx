@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { collection, query, where, getDocs, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
 import { Button } from "@/components/ui/button";
+import { releaseAssignmentGrades } from "@/lib/grading/overview.functions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,19 +31,16 @@ export function ReleaseGradesButton({
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const releaseServerFn = useServerFn(releaseAssignmentGrades);
 
   const release = useMutation({
     mutationFn: async () => {
-      const q = query(collection(db, "submissions"), where("refId", "==", assignmentId));
-      const snap = await getDocs(q);
-      const batch = writeBatch(db);
-      snap.docs.forEach((d) => {
-        batch.update(d.ref, { status: "graded" });
-      });
-      await batch.commit();
+      return await releaseServerFn({ data: { assignmentId } });
     },
-    onSuccess: () => {
-      toast.success(`Released ${count} grade${count === 1 ? "" : "s"}`);
+    onSuccess: (res) => {
+      toast.success(
+        `Released ${res?.count ?? count} grade${(res?.count ?? count) === 1 ? "" : "s"}`,
+      );
       setOpen(false);
       void qc.invalidateQueries();
     },

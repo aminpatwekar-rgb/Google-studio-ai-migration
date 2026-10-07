@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { auth } from "@/lib/firebase/config";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase/config";
 import { AppShell } from "@/components/AppShell";
 import { isSessionConfirmed } from "@/lib/session-confirm";
 
@@ -25,6 +26,15 @@ export const Route = createFileRoute("/_authenticated")({
 
     if (!isSessionConfirmed(resolvedUser.uid)) {
       throw redirect({ to: "/auth", search: { confirm: true } });
+    }
+
+    // Verify user profile exists in Firestore (new users must select role on sign-up)
+    const isAdmin = resolvedUser.email === "aminpatwekar@gmail.com";
+    if (!isAdmin) {
+      const userDoc = await getDoc(doc(db, "users", resolvedUser.uid));
+      if (!userDoc.exists()) {
+        throw redirect({ to: "/auth", search: { mode: "signup" } });
+      }
     }
 
     return { user: resolvedUser };

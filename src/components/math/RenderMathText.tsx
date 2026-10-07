@@ -42,7 +42,12 @@ export function RenderMathText({ text, className }: { text: string; className?: 
   const parts = useMemo(() => splitMathText(text), [text]);
 
   return (
-    <div className={cn("whitespace-pre-wrap leading-7", className)}>
+    <div
+      className={cn(
+        "whitespace-pre-wrap leading-relaxed break-words [overflow-wrap:anywhere] max-w-full overflow-visible",
+        className,
+      )}
+    >
       {parts.map((part, index) => (
         <Fragment key={`${part.kind}-${index}`}>
           {part.kind === "text" ? (

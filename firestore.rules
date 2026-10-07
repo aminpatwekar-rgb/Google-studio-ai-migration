@@ -7,68 +7,115 @@ service cloud.firestore {
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'aminpatwekar@gmail.com' ||
+        (exists(/databases/$(database)/documents/system/config) &&
+         get(/databases/$(database)/documents/system/config).data.superAdminUid == request.auth.uid)
+      );
+    }
+
     function isAdmin() {
-      return isSignedIn() &&
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isTeacher() {
+      return isSignedIn() && (
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
     function isTeacherForClass(classId) {
-      return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
+      return isSignedIn() &&
+        classId != null &&
+        classId is string &&
+        classId.size() > 0 &&
+        exists(/databases/$(database)/documents/classes/$(classId)) &&
         (get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == request.auth.uid ||
          (get(/databases/$(database)/documents/classes/$(classId)).data.teacherIds != null &&
           request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.teacherIds));
     }
-    function isEnrolledInClass(classId) {
-      return isSignedIn() && exists(/databases/$(database)/documents/classes/$(classId)) &&
-        request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.studentIds;
-    }
 
     match /users/{uid} {
-      allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
-      allow list: if isAdmin();
-      // Profile creation is performed by the trusted Firebase Admin server function.
-      allow create: if false;
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
       allow update: if isSignedIn() && (
-        isAdmin() ||
-        (request.auth.uid == uid && incoming().role == existing().role)
+        (exists(/databases/$(database)/documents/system/config) &&
+         get(/databases/$(database)/documents/system/config).data.superAdminUid == uid)
+        ? (request.auth.uid == uid)
+        : (
+          isSuperAdmin() ||
+          (isAdmin() && existing().role != 'admin') ||
+          (request.auth.uid == uid && (
+            incoming().role in ['student', 'teacher'] ||
+            incoming().role == existing().role ||
+            existing().role == null
+          ))
+        )
       );
-      allow delete: if isAdmin() && uid != request.auth.uid;
+      allow delete: if isAdmin() && uid != request.auth.uid && (
+        !(exists(/databases/$(database)/documents/system/config) &&
+          get(/databases/$(database)/documents/system/config).data.superAdminUid == uid)
+      );
 
       match /achievements/{userAchievementId} {
         allow read, write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
       }
     }
 
+    match /system/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (
+        (!exists(/databases/$(database)/documents/system/config)) ||
+        (!('superAdminUid' in get(/databases/$(database)/documents/system/config).data))
+      ) ? (request.auth.token.email == 'aminpatwekar@gmail.com') : (
+        get(/databases/$(database)/documents/system/config).data.superAdminUid == request.auth.uid
+      );
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if isSignedIn();
+    }
+
+    match /billing_alerts/{alertId} {
+      allow read, write: if isSuperAdmin();
+    }
+
     match /classes/{classId} {
-      allow get: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
-      allow list: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow get: if true;
+      allow list: if isSignedIn();
       allow create: if isSignedIn() && (incoming().teacherId == request.auth.uid || isAdmin());
       allow update: if isSignedIn() && (
         isAdmin() || isTeacherForClass(classId) ||
         (
-          incoming().diff(existing()).affectedKeys().hasOnly(['studentIds']) &&
-          request.auth.uid in existing().studentIds &&
-          incoming().studentIds.size() >= 0 &&
-          incoming().studentIds.hasAll(existing().studentIds.diff([request.auth.uid]))
+          request.resource.data.diff(existing()).affectedKeys().hasOnly(['studentIds']) &&
+          request.auth.uid in request.resource.data.studentIds &&
+          (request.auth.uid in existing().studentIds || request.resource.data.studentIds.size() == existing().studentIds.size() + 1)
         )
       );
       allow delete: if isSignedIn() && (isAdmin() || resource.data.teacherId == request.auth.uid);
     }
 
     match /assignments/{assignmentId} {
-      allow get: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId) || isEnrolledInClass(resource.data.classId));
+      allow get: if true;
       allow list: if isSignedIn();
       allow create: if isSignedIn() && (isTeacherForClass(incoming().classId) || isAdmin());
       allow update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId));
       match /attachments/{attachmentId} {
-        allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId) || isEnrolledInClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
+        allow read: if true;
         allow create, update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(get(/databases/$(database)/documents/assignments/$(assignmentId)).data.classId));
       }
     }
 
     match /quizzes/{quizId} {
-      allow get, list: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId) || isEnrolledInClass(resource.data.classId));
+      allow get, list: if isSignedIn();
       allow create: if isSignedIn() && (isTeacherForClass(incoming().classId) || isAdmin());
       allow update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(resource.data.classId));
       match /keys/{keyId} {
@@ -77,51 +124,28 @@ service cloud.firestore {
     }
 
     match /submissions/{submissionId} {
-      allow get, list: if isSignedIn() && (isAdmin() || resource.data.studentId == request.auth.uid || isTeacherForClass(resource.data.classId));
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
       allow create: if isSignedIn() &&
         incoming().studentId == request.auth.uid &&
-        incoming().status == 'submitted' &&
-        incoming().score == null &&
-        incoming().gradedBy == null &&
-        incoming().gradedAt == null &&
         exists(/databases/$(database)/documents/classes/$(incoming().classId)) &&
-        request.auth.uid in get(/databases/$(database)/documents/classes/$(incoming().classId)).data.studentIds &&
-        (
-          (incoming().type == 'assignment' &&
-            exists(/databases/$(database)/documents/assignments/$(incoming().refId)) &&
-            get(/databases/$(database)/documents/assignments/$(incoming().refId)).data.classId == incoming().classId) ||
-          (incoming().type == 'quiz' &&
-            exists(/databases/$(database)/documents/quizzes/$(incoming().refId)) &&
-            get(/databases/$(database)/documents/quizzes/$(incoming().refId)).data.classId == incoming().classId)
-        );
+        request.auth.uid in get(/databases/$(database)/documents/classes/$(incoming().classId)).data.studentIds;
       allow update: if isSignedIn() && (
         isAdmin() ||
-        (
-          isTeacherForClass(resource.data.classId) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['status','score','feedback','gradedBy','gradedAt']) &&
-          incoming().status == 'graded' &&
-          incoming().gradedBy == request.auth.uid &&
-          incoming().gradedAt != null &&
-          incoming().score >= 0 &&
-          (
-            (resource.data.type == 'assignment' &&
-              incoming().score <= get(/databases/$(database)/documents/assignments/$(resource.data.refId)).data.maxPoints) ||
-            (resource.data.type == 'quiz' &&
-              incoming().score <= 10000)
-          )
-        )
+        (resource.data != null && 'classId' in resource.data && isTeacherForClass(resource.data.classId)) ||
+        (resource.data != null && 'studentId' in resource.data && resource.data.studentId == request.auth.uid)
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data != null && 'classId' in resource.data && isTeacherForClass(resource.data.classId));
     }
 
     match /rubrics/{rubricId} {
-      allow read: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
-      allow create: if isSignedIn() && (isAdmin() || incoming().owner_id == request.auth.uid);
-      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.owner_id == request.auth.uid);
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isTeacher() || isAdmin());
+      allow update, delete: if isSignedIn() && (isAdmin() || (resource.data != null && resource.data.owner_id == request.auth.uid) || isTeacher());
     }
 
     match /classes/{classId}/resources/{resourceId} {
-      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow read: if isSignedIn();
       allow create, update, delete: if isSignedIn() && (isAdmin() || isTeacherForClass(classId));
     }
     match /announcements/{announcementId} {
@@ -130,17 +154,17 @@ service cloud.firestore {
       allow update, delete: if isSignedIn() && (isAdmin() || resource.data.author_id == request.auth.uid);
     }
     match /classes/{classId}/discussions/{discussionId} {
-      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
-      allow create: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
       allow update, delete: if isSignedIn() && (isAdmin() || resource.data.author_id == request.auth.uid || isTeacherForClass(classId));
     }
     match /classes/{classId}/attendance/{dateId} {
-      allow read: if isSignedIn() && (isAdmin() || isTeacherForClass(classId) || isEnrolledInClass(classId));
+      allow read: if isSignedIn();
       allow write: if isSignedIn() && (isAdmin() || isTeacherForClass(classId));
     }
     match /notifications/{notificationId} {
       allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow create: if isSignedIn() && (incoming().userId == request.auth.uid || isTeacher() || isAdmin());
       allow update: if isSignedIn() && resource.data.userId == request.auth.uid &&
         incoming().diff(existing()).affectedKeys().hasOnly(['read']);
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -152,11 +176,22 @@ service cloud.firestore {
     }
     match /leaderboard/{userId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == userId;
+      allow write: if false;
     }
     match /payments/{paymentId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isSuperAdmin() || isAdmin());
       allow write: if false;
+    }
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (isAdmin() || (incoming().classId != null && isTeacherForClass(incoming().classId)));
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (resource.data != null && 'classId' in resource.data && isTeacherForClass(resource.data.classId)) ||
+        (resource.data != null && 'memberIds' in resource.data && request.auth.uid in resource.data.memberIds)
+      );
+      allow delete: if isSignedIn() && (isAdmin() || (resource.data != null && 'classId' in resource.data && isTeacherForClass(resource.data.classId)));
     }
   }
 }

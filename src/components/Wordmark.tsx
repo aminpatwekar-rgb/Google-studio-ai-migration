@@ -14,13 +14,13 @@ export function Wordmark({
   return (
     <div className={cn("flex items-center gap-3", className)}>
       <img
-        src={onyxMark.url}
+        src={onyxMark.url || "/onyx-logo.jpg"}
         width={44}
         height={44}
         decoding="async"
-        alt=""
-        aria-hidden="true"
-        className={cn("shrink-0 rounded-full object-cover", box)}
+        alt="ONYX"
+        referrerPolicy="no-referrer"
+        className={cn("shrink-0 rounded-full object-cover border border-border/80 shadow-xs", box)}
       />
       <span className="flex flex-col leading-tight">
         <span className="text-lg font-bold tracking-tight">ONYX</span>

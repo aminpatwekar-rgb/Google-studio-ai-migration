@@ -57,7 +57,10 @@ function ResetPassword() {
               We have sent password reset instructions to{" "}
               <span className="font-medium text-foreground">{email}</span>.
             </p>
-            <Button className="w-full" onClick={() => navigate({ to: "/auth", search: { mode: "signin" } })}>
+            <Button
+              className="w-full"
+              onClick={() => navigate({ to: "/auth", search: { mode: "signin" } })}
+            >
               Return to sign in
             </Button>
           </div>

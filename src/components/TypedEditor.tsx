@@ -29,16 +29,16 @@ export type ImageBlock = {
 type Props = {
   value: string;
   onChange: (v: string) => void;
-  blocks: ImageBlock[];
-  onBlocksChange: (b: ImageBlock[]) => void;
-  allowImages: boolean;
-  allowAutocorrect: boolean;
-  allowVoice: boolean;
+  blocks?: ImageBlock[];
+  onBlocksChange?: (b: ImageBlock[]) => void;
+  allowImages?: boolean;
+  allowAutocorrect?: boolean;
+  allowVoice?: boolean;
   allowMath?: boolean;
   disabled?: boolean;
-  onViolation: (kind: string) => void;
-  violations: number;
-  onUploadImage: (file: File) => Promise<ImageBlock | null>;
+  onViolation?: (kind: string) => void;
+  violations?: number;
+  onUploadImage?: (file: File) => Promise<ImageBlock | null>;
 };
 
 interface SpeechRecognitionEvent {
@@ -70,15 +70,15 @@ interface SpeechRecognitionInstance {
 export function TypedEditor({
   value,
   onChange,
-  blocks,
+  blocks = [],
   onBlocksChange,
-  allowImages,
-  allowAutocorrect,
-  allowVoice,
+  allowImages = false,
+  allowAutocorrect = true,
+  allowVoice = true,
   allowMath = true,
-  disabled,
-  onViolation,
-  violations,
+  disabled = false,
+  onViolation = () => {},
+  violations = 0,
   onUploadImage,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -106,6 +106,7 @@ export function TypedEditor({
       toast.error("Images are disabled on this assignment");
       return;
     }
+    if (!onUploadImage) return;
     setUploading(true);
     const added: ImageBlock[] = [];
     for (const file of Array.from(files)) {
@@ -114,15 +115,15 @@ export function TypedEditor({
       if (b) added.push(b);
     }
     setUploading(false);
-    if (added.length) onBlocksChange([...blocks, ...added]);
+    if (added.length && onBlocksChange) onBlocksChange([...(blocks || []), ...added]);
   }
 
   function move(idx: number, dir: -1 | 1) {
-    const next = [...blocks];
+    const next = [...(blocks || [])];
     const target = idx + dir;
     if (target < 0 || target >= next.length) return;
     [next[idx], next[target]] = [next[target]!, next[idx]!];
-    onBlocksChange(next);
+    onBlocksChange?.(next);
   }
 
   // Voice typing stays on until the student turns it off. Browsers end a
@@ -353,9 +354,10 @@ export function TypedEditor({
           }}
           onKeyDown={(e) => {
             const mod = e.ctrlKey || e.metaKey;
-            if (mod && ["v", "c", "x"].includes(e.key.toLowerCase())) {
+            const k = (e.key || "").toLowerCase();
+            if (mod && ["v", "c", "x"].includes(k)) {
               e.preventDefault();
-              block(`key-${e.key.toLowerCase()}`, "That shortcut");
+              block(`key-${k}`, "That shortcut");
             }
           }}
           placeholder="Write your answer here. Pasting is disabled."
@@ -400,7 +402,7 @@ export function TypedEditor({
         </DialogContent>
       </Dialog>
 
-      {allowImages && blocks.length > 0 && (
+      {allowImages && Array.isArray(blocks) && blocks.length > 0 && (
         <div className="space-y-3">
           {blocks.map((b, i) => (
             <div key={b.id} className="panel flex gap-3 p-3">
@@ -415,9 +417,9 @@ export function TypedEditor({
                   maxLength={160}
                   placeholder="Caption"
                   onChange={(e) => {
-                    const next = [...blocks];
+                    const next = [...(blocks || [])];
                     next[i] = { ...b, caption: e.target.value };
-                    onBlocksChange(next);
+                    onBlocksChange?.(next);
                   }}
                 />
                 <div className="flex gap-1">
@@ -431,7 +433,7 @@ export function TypedEditor({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    onClick={() => onBlocksChange(blocks.filter((x) => x.id !== b.id))}
+                    onClick={() => onBlocksChange?.((blocks || []).filter((x) => x.id !== b.id))}
                   >
                     <Trash2 className="size-4 text-destructive" />
                   </Button>

@@ -25,7 +25,11 @@ export const TYPE_LABEL: Record<QuestionType, string> = Object.fromEntries(
   QUESTION_TYPES.map((t) => [t.value, t.label]),
 ) as Record<QuestionType, string>;
 
-export const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
+export const DIFFICULTIES: { value: Difficulty; label: string }[] = [
+  { value: "easy", label: "Easy" },
+  { value: "medium", label: "Medium" },
+  { value: "hard", label: "Hard" },
+];
 
 export const KIND_LABEL: Record<QuizKind, string> = {
   practice: "Practice",

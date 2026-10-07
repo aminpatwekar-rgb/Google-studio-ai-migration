@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, Library, RefreshCw, Trash2 } from "lucide-react";
+import { RenderMathText } from "@/components/math/RenderMathText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -104,8 +105,8 @@ export function QuestionEditor({
           </SelectTrigger>
           <SelectContent>
             {DIFFICULTIES.map((d) => (
-              <SelectItem key={d} value={d} className="capitalize">
-                {d}
+              <SelectItem key={d.value} value={d.value} className="capitalize">
+                {d.label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -190,16 +191,27 @@ export function QuestionEditor({
         </div>
       </div>
 
-      <Textarea
-        value={q.prompt}
-        onChange={(e) => set({ prompt: e.target.value })}
-        placeholder={
-          q.type === "fill_blank"
-            ? "Water boils at ____ °C at sea level."
-            : "Write the question here"
-        }
-        className="min-h-20"
-      />
+      <div className="w-full min-w-0 space-y-1.5">
+        <Textarea
+          autoResize
+          value={q.prompt}
+          onChange={(e) => set({ prompt: e.target.value })}
+          placeholder={
+            q.type === "fill_blank"
+              ? "Water boils at ____ °C at sea level."
+              : "Write the question here"
+          }
+          className="w-full leading-relaxed break-words"
+        />
+        {q.prompt.includes("$") && (
+          <div className="p-3 bg-secondary/30 rounded-lg border border-border/70 text-sm overflow-visible">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+              Math Preview
+            </span>
+            <RenderMathText text={q.prompt} />
+          </div>
+        )}
+      </div>
 
       {choice && (
         <div className="space-y-2">
@@ -278,10 +290,11 @@ export function QuestionEditor({
       <div className="space-y-1.5">
         <Label htmlFor={`exp-${q.id}`}>Explanation (shown after grading)</Label>
         <Textarea
+          autoResize
           id={`exp-${q.id}`}
           value={q.explanation}
           onChange={(e) => set({ explanation: e.target.value })}
-          className="min-h-16"
+          className="overflow-hidden text-sm"
         />
       </div>
     </div>

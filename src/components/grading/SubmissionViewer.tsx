@@ -1,6 +1,11 @@
-import { ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { ShieldAlert, Sparkles, Loader2 } from "lucide-react";
 import { RenderMathText } from "@/components/math/RenderMathText";
 import { formatDue } from "@/lib/assignments";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
+import { performHandwritingOcr } from "@/lib/ai/ocr.functions";
 
 export type ViewerFile = {
   id: string;
@@ -56,24 +61,14 @@ export function SubmissionViewer({
 
       {pages.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Pages ({pages.length})
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Pages ({pages.length})
+            </h2>
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             {pages.map((p, i) => (
-              <figure key={p.id} className="panel overflow-hidden p-0">
-                <a href={p.url} target="_blank" rel="noreferrer" aria-label={`Open page ${i + 1}`}>
-                  <img
-                    src={p.url}
-                    alt={`Page ${i + 1}`}
-                    loading="lazy"
-                    className="w-full bg-muted/30 object-contain"
-                  />
-                </a>
-                <figcaption className="px-3 py-2 text-xs text-muted-foreground">
-                  Page {i + 1} · {p.file_name}
-                </figcaption>
-              </figure>
+              <PageWithOcr key={p.id} page={p} index={i} />
             ))}
           </div>
         </section>
@@ -107,5 +102,107 @@ export function SubmissionViewer({
         </section>
       )}
     </div>
+  );
+}
+
+function PageWithOcr({ page, index }: { page: ViewerFile; index: number }) {
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editableText, setEditableText] = useState("");
+
+  const handleOcr = async () => {
+    setLoading(true);
+    try {
+      // Fetch image and convert to data URL for OCR
+      const resp = await fetch(page.url);
+      const blob = await resp.blob();
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const res = await performHandwritingOcr({
+        data: { imageDataUrl: dataUrl, mode: "math" },
+      });
+
+      setOcrText(res.text);
+      setEditableText(res.text);
+      toast.success("Handwriting successfully digitized!");
+    } catch (err: any) {
+      toast.error(err.message || "Could not digitize page");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <figure className="panel overflow-hidden p-0 flex flex-col justify-between">
+      <a href={page.url} target="_blank" rel="noreferrer" aria-label={`Open page ${index + 1}`}>
+        <img
+          src={page.url}
+          alt={`Page ${index + 1}`}
+          loading="lazy"
+          className="w-full bg-muted/30 object-contain max-h-80"
+        />
+      </a>
+      <div className="p-3 border-t border-border space-y-2 bg-card">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            Page {index + 1} · {page.file_name}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5"
+            onClick={handleOcr}
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                Digitizing...
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-3 text-primary" />
+                Convert to Digital
+              </>
+            )}
+          </Button>
+        </div>
+
+        {ocrText && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-primary flex items-center gap-1">
+                <Sparkles className="size-3" /> Digitized Transcription (LaTeX Math)
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 text-[11px] px-2"
+                onClick={() => setEditing(!editing)}
+              >
+                {editing ? "Preview" : "Edit"}
+              </Button>
+            </div>
+            {editing ? (
+              <Textarea
+                value={editableText}
+                onChange={(e) => setEditableText(e.target.value)}
+                className="font-mono text-xs min-h-24 bg-background"
+              />
+            ) : (
+              <div className="bg-background/80 p-2.5 rounded border border-border/60">
+                <RenderMathText text={editableText || ocrText} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </figure>
   );
 }

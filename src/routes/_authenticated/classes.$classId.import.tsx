@@ -64,8 +64,9 @@ function Page() {
             Import complete
           </h2>
           <p className="text-sm">
-            {run.data.imported} imported · {run.data.skipped} skipped · {run.data.total} rows
-            processed.
+            {run.data.importedCount ?? run.data.imported} imported ·{" "}
+            {run.data.skippedCount ?? run.data.skipped} skipped ·{" "}
+            {run.data.totalRows ?? run.data.total} rows processed.
           </p>
           {run.data.skippedRows.length > 0 && (
             <div className="rounded-lg border border-border p-3 text-xs">

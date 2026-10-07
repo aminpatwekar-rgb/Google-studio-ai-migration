@@ -49,6 +49,7 @@ import {
   PAGE_H,
   PAGE_W,
   blankPage,
+  emptyNotebook,
   renderPage,
   type Ink,
   type Notebook,
@@ -97,12 +98,12 @@ function useIsDark() {
 }
 
 export function NotebookCanvas({
-  value,
-  onChange,
+  value: externalValue,
+  onChange: externalOnChange,
   readOnly = false,
   title = "Notebook",
 }: {
-  value: Notebook;
+  value?: Notebook;
   onChange?: (next: Notebook) => void;
   readOnly?: boolean;
   title?: string;
@@ -116,6 +117,29 @@ export function NotebookCanvas({
   const dragging = useRef<{ id: string; kind: "overlay" | "plot"; dx: number; dy: number } | null>(
     null,
   );
+
+  const [internalValue, setInternalValue] = useState<Notebook>(() => emptyNotebook());
+
+  const value = useMemo(() => {
+    if (externalValue && Array.isArray(externalValue.pages) && externalValue.pages.length > 0) {
+      return externalValue;
+    }
+    return internalValue;
+  }, [externalValue, internalValue]);
+
+  const onChange = useCallback(
+    (next: Notebook) => {
+      setInternalValue(next);
+      if (externalOnChange) {
+        externalOnChange(next);
+      }
+    },
+    [externalOnChange],
+  );
+
+  const pages = useMemo(() => {
+    return Array.isArray(value?.pages) && value.pages.length > 0 ? value.pages : [blankPage()];
+  }, [value?.pages]);
 
   const [pageIndex, setPageIndex] = useState(0);
   const [mode, setMode] = useState<Mode>("pen");
@@ -138,28 +162,27 @@ export function NotebookCanvas({
   } | null>(null);
   const [plotDraft, setPlotDraft] = useState<Omit<Plot, "id"> | null>(null);
 
-  const page = value.pages[Math.min(pageIndex, value.pages.length - 1)] ?? blankPage();
+  const page = pages[Math.min(pageIndex, pages.length - 1)] ?? blankPage();
 
   /* ---------------------------------------------------------- persistence */
 
   const commit = useCallback(
     (mutate: (p: NotebookPage) => NotebookPage, options: { history?: boolean } = {}) => {
-      if (!onChange) return;
       if (options.history !== false) {
         setPast((p) => [...p.slice(-40), value]);
         setFuture([]);
       }
       onChange({
         ...value,
-        pages: value.pages.map((p, i) => (i === pageIndex ? mutate(p) : p)),
+        pages: pages.map((p, i) => (i === pageIndex ? mutate(p) : p)),
       });
     },
-    [onChange, pageIndex, value],
+    [onChange, pageIndex, pages, value],
   );
 
   function undo() {
     const prev = past[past.length - 1];
-    if (!prev || !onChange) return;
+    if (!prev) return;
     setPast((p) => p.slice(0, -1));
     setFuture((f) => [value, ...f].slice(0, 40));
     onChange(prev);
@@ -167,7 +190,7 @@ export function NotebookCanvas({
 
   function redo() {
     const next = future[0];
-    if (!next || !onChange) return;
+    if (!next) return;
     setFuture((f) => f.slice(1));
     setPast((p) => [...p, value]);
     onChange(next);
@@ -372,16 +395,15 @@ export function NotebookCanvas({
   /* ----------------------------------------------------------------- pages */
 
   function addPage() {
-    if (!onChange) return;
     setPast((p) => [...p, value]);
-    onChange({ ...value, pages: [...value.pages, blankPage(page.paper)] });
-    setPageIndex(value.pages.length);
+    onChange({ ...value, pages: [...pages, blankPage(page.paper)] });
+    setPageIndex(pages.length);
   }
 
   function deletePage() {
-    if (!onChange || value.pages.length === 1) return;
+    if (pages.length <= 1) return;
     setPast((p) => [...p, value]);
-    onChange({ ...value, pages: value.pages.filter((_, i) => i !== pageIndex) });
+    onChange({ ...value, pages: pages.filter((_, i) => i !== pageIndex) });
     setPageIndex((i) => Math.max(0, i - 1));
   }
 
@@ -642,7 +664,7 @@ export function NotebookCanvas({
           <ChevronLeft className="size-4" />
         </Button>
         <span className="text-sm text-muted-foreground">
-          Page {Math.min(pageIndex + 1, value.pages.length)} of {value.pages.length}
+          Page {Math.min(pageIndex + 1, pages.length)} of {pages.length}
         </span>
         <Button
           type="button"
@@ -650,8 +672,8 @@ export function NotebookCanvas({
           size="icon"
           className="size-9"
           aria-label="Next page"
-          disabled={pageIndex >= value.pages.length - 1}
-          onClick={() => setPageIndex((i) => Math.min(value.pages.length - 1, i + 1))}
+          disabled={pageIndex >= pages.length - 1}
+          onClick={() => setPageIndex((i) => Math.min(pages.length - 1, i + 1))}
         >
           <ChevronRight className="size-4" />
         </Button>
@@ -666,7 +688,7 @@ export function NotebookCanvas({
               variant="outline"
               size="sm"
               onClick={deletePage}
-              disabled={value.pages.length === 1}
+              disabled={pages.length === 1}
             >
               <Trash2 className="mr-1.5 size-4" /> Delete page
             </Button>

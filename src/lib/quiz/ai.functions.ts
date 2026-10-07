@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireFirebaseAuth } from "@/lib/firebase/auth-middleware";
+import { getGeminiClient } from "@/lib/gemini.server";
 
 export type GeneratedQuestion = {
   type: string;
@@ -25,8 +26,8 @@ const ALLOWED_TYPES = ["mcq", "multi_select", "true_false", "fill_blank", "short
 
 function validate(input: GenerateInput): GenerateInput {
   const material = String(input?.material ?? "").trim();
-  if (material.length < 20) {
-    throw new Error("Add at least a short paragraph of study material to generate from.");
+  if (material.length < 10) {
+    throw new Error("Add at least some study material or text to generate from.");
   }
   const types = (Array.isArray(input.types) ? input.types : []).filter((t) =>
     ALLOWED_TYPES.includes(t),
@@ -85,16 +86,15 @@ function parseQuestions(raw: string): GeneratedQuestion[] {
         ? [String(q.correct)]
         : [],
     explanation: String(q.explanation || "").trim(),
-    points: Number(q.points) > 0 ? Number(q.points) : 2,
+    points: Number(q.points) > 0 ? Number(q.points) : 1,
   }));
 }
 
 function generateLocalQuestions(input: GenerateInput): GeneratedQuestion[] {
-  // Reliable generator when external API is not configured
   const sentences = input.material
     .split(/(?<=[.?!])\s+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 20);
+    .filter((s) => s.length > 15);
 
   const questions: GeneratedQuestion[] = [];
   const count = Math.min(input.count, Math.max(1, sentences.length));
@@ -109,10 +109,21 @@ function generateLocalQuestions(input: GenerateInput): GeneratedQuestion[] {
         type: "true_false",
         difficulty:
           input.difficulty === "mixed" ? (i % 2 === 0 ? "easy" : "medium") : input.difficulty,
-        prompt: `True or False: According to the material, "${s}"?`,
+        prompt: `True or False: According to the study material, "${s}"?`,
         options: ["True", "False"],
         correct: ["True"],
         explanation: input.withExplanations ? "Directly stated in the provided text." : "",
+        points: 1,
+      });
+    } else if (input.types.includes("short_answer") && i % 3 === 1) {
+      questions.push({
+        type: "short_answer",
+        difficulty:
+          input.difficulty === "mixed" ? (i % 2 === 0 ? "easy" : "medium") : input.difficulty,
+        prompt: `Explain the importance of ${keyword} in relation to: "${s}"`,
+        options: [],
+        correct: [keyword],
+        explanation: input.withExplanations ? `Key keyword: ${keyword}` : "",
         points: 2,
       });
     } else {
@@ -120,16 +131,16 @@ function generateLocalQuestions(input: GenerateInput): GeneratedQuestion[] {
         type: "mcq",
         difficulty:
           input.difficulty === "mixed" ? (i % 2 === 0 ? "easy" : "medium") : input.difficulty,
-        prompt: `Based on the material, what statement best describes ${keyword}?`,
+        prompt: `Based on the study material, what best describes ${keyword}?`,
         options: [
           s,
-          `It is unrelated to the primary discussion of ${keyword}.`,
-          `It contradicts the foundational findings on ${keyword}.`,
-          `It is an obsolete hypothesis regarding ${keyword}.`,
+          `It is completely unrelated to ${keyword}.`,
+          `It is an obsolete concept regarding ${keyword}.`,
+          `None of the above.`,
         ],
         correct: [s],
         explanation: input.withExplanations ? `Excerpt: "${s}"` : "",
-        points: 2,
+        points: 1,
       });
     }
   }
@@ -138,60 +149,89 @@ function generateLocalQuestions(input: GenerateInput): GeneratedQuestion[] {
 }
 
 async function callAI(input: GenerateInput): Promise<GeneratedQuestion[]> {
-  const geminiKey = process.env["GEMINI_API_KEY"];
-  if (!geminiKey) {
-    return generateLocalQuestions(input);
-  }
-
+  const ai = getGeminiClient();
   const prompt = [
-    `Generate exactly ${input.count} assessment question(s) strictly from this material:`,
+    `You are an expert educator. Generate exactly ${input.count} assessment question(s) strictly from this study material:`,
     input.material,
-    `Question types: ${input.types.join(", ")}. Difficulty: ${input.difficulty}.`,
+    `Allowed Question types: ${input.types.join(", ")}. Difficulty level: ${input.difficulty}.`,
     input.topic ? `Focus on topic: ${input.topic}.` : "",
-    input.avoid?.length ? `Avoid: ${input.avoid.join(", ")}` : "",
-    `Return ONLY a JSON object: {"questions": [{"type": "mcq"|"true_false"|"short_answer", "difficulty": "easy"|"medium"|"hard", "prompt": string, "options": string[], "correct": string[], "explanation": string, "points": number}]}`,
+    input.avoid?.length ? `Avoid repeating: ${input.avoid.join(", ")}` : "",
+    `Include clear answer explanations if withExplanations is true (${input.withExplanations}).`,
+    `For math equations, format them properly in LaTeX notation with single dollars $...$ or double dollars $$...$$.`,
+    `Return ONLY a valid JSON object matching this schema:`,
+    `{"questions": [{"type": "mcq"|"multi_select"|"true_false"|"fill_blank"|"short_answer"|"essay", "difficulty": "easy"|"medium"|"hard", "prompt": string, "options": string[], "correct": string[], "explanation": string, "points": number}]}`,
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" },
-        }),
+  const runModel = async (model: string) => {
+    return await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
       },
-    );
+    });
+  };
 
-    if (!res.ok) {
-      return generateLocalQuestions(input);
+  try {
+    let response;
+    try {
+      response = await runModel("gemini-2.5-flash");
+    } catch (err: any) {
+      if (err.status === 503 || err.message?.includes("UNAVAILABLE")) {
+        console.warn("gemini-2.5-flash unavailable, falling back to gemini-flash-latest");
+        response = await runModel("gemini-flash-latest");
+      } else {
+        throw err;
+      }
     }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return generateLocalQuestions(input);
+
+    const text = response.text;
+    console.log("AI Raw response length:", text?.length);
+    if (!text) throw new Error("No AI response received.");
     return parseQuestions(text);
-  } catch {
-    return generateLocalQuestions(input);
+  } catch (err) {
+    console.error("Error in callAI:", err);
+    throw err;
   }
 }
+
+import { consumeAiQuestionQuota } from "@/lib/entitlements.functions";
 
 export const generateQuizQuestions = createServerFn({ method: "POST" })
   .middleware([requireFirebaseAuth])
   .validator((input: GenerateInput) => validate(input))
-  .handler(async ({ data }) => {
-    const questions = await callAI(data);
-    return { questions: questions.slice(0, data.count) };
+  .handler(async ({ data, context }) => {
+    console.log("generateQuizQuestions called by:", context.userId, context.email);
+    try {
+      // Check and consume quota first
+      await consumeAiQuestionQuota(context.userId, data.count, context.email);
+      console.log("Quota consumed successfully");
+
+      const questions = await callAI(data);
+      console.log("AI Questions generated:", questions.length);
+
+      return { questions: questions.slice(0, data.count) };
+    } catch (err: any) {
+      console.error("Error in generateQuizQuestions:", err);
+      throw err;
+    }
   });
 
 export const regenerateQuizQuestion = createServerFn({ method: "POST" })
   .middleware([requireFirebaseAuth])
   .validator((input: GenerateInput) => validate({ ...input, count: 1 }))
-  .handler(async ({ data }) => {
-    const questions = await callAI({ ...data, count: 1 });
-    const question = questions[0] || generateLocalQuestions({ ...data, count: 1 })[0];
-    return { question };
+  .handler(async ({ data, context }) => {
+    console.log("regenerateQuizQuestion called by:", context.userId, context.email);
+    try {
+      // Check and consume 1 unit of AI quota
+      await consumeAiQuestionQuota(context.userId, 1, context.email);
+      const questions = await callAI({ ...data, count: 1 });
+      const question = questions[0] || generateLocalQuestions({ ...data, count: 1 })[0];
+      return { question };
+    } catch (err: any) {
+      console.error("Error in regenerateQuizQuestion:", err);
+      throw err;
+    }
   });

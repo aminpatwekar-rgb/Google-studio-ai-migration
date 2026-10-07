@@ -1,6 +1,6 @@
 /**
  * ONYX never drops a returning visitor straight into the dashboard. A restored
- * Supabase session only becomes usable once the person explicitly confirms
+ * Firebase session only becomes usable once the person explicitly confirms
  * "Continue as …". The confirmation lives in sessionStorage so that closing the
  * browser (or opening a fresh tab) asks again, while an in-session navigation
  * or reload does not nag.

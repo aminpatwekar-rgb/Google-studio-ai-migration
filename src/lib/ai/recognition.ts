@@ -1,9 +1,9 @@
+import { performHandwritingOcr } from "./ocr.functions";
+
 /**
  * Recognition & AI extension points.
  *
- * Nothing here fabricates results. Each provider is an interface with a
- * "not configured" default so future OCR / handwriting / feedback engines can be
- * plugged in without touching the notebook or submission UI.
+ * Real handwriting and math OCR powered by Gemini Vision.
  */
 
 export type RecognitionSource =
@@ -40,20 +40,50 @@ function unconfigured(id: string, label: string): RecognitionProvider {
   };
 }
 
-/** Handwriting → plain text. */
-export const handwritingProvider: RecognitionProvider = unconfigured(
-  "handwriting",
-  "Handwriting recognition",
-);
+/** Handwriting → plain text via Gemini Vision. */
+export const handwritingProvider: RecognitionProvider = {
+  id: "handwriting",
+  label: "Handwriting recognition",
+  available: true,
+  recognize: async (source: RecognitionSource) => {
+    if (source.kind !== "image" || !source.dataUrl) {
+      throw new Error("Handwriting recognition requires an image source.");
+    }
+    return await performHandwritingOcr({
+      data: { imageDataUrl: source.dataUrl, mode: "handwriting" },
+    });
+  },
+};
 
 /** Page image → text (printed / scanned pages). */
-export const ocrProvider: RecognitionProvider = unconfigured("ocr", "OCR");
+export const ocrProvider: RecognitionProvider = {
+  id: "ocr",
+  label: "OCR",
+  available: true,
+  recognize: async (source: RecognitionSource) => {
+    if (source.kind !== "image" || !source.dataUrl) {
+      throw new Error("OCR requires an image source.");
+    }
+    return await performHandwritingOcr({
+      data: { imageDataUrl: source.dataUrl, mode: "printed" },
+    });
+  },
+};
 
 /** Handwritten maths → LaTeX. */
-export const mathRecognitionProvider: RecognitionProvider = unconfigured(
-  "math-ocr",
-  "Math recognition",
-);
+export const mathRecognitionProvider: RecognitionProvider = {
+  id: "math-ocr",
+  label: "Math recognition",
+  available: true,
+  recognize: async (source: RecognitionSource) => {
+    if (source.kind !== "image" || !source.dataUrl) {
+      throw new Error("Math recognition requires an image source.");
+    }
+    return await performHandwritingOcr({
+      data: { imageDataUrl: source.dataUrl, mode: "math" },
+    });
+  },
+};
 
 export const RECOGNITION_PROVIDERS = [
   handwritingProvider,
@@ -62,5 +92,5 @@ export const RECOGNITION_PROVIDERS = [
 ] as const;
 
 export function isRecognitionEnabled() {
-  return RECOGNITION_PROVIDERS.some((p) => p.available);
+  return true;
 }

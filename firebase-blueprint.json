@@ -156,6 +156,29 @@
         "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "userId", "razorpayOrderId", "amount", "plan", "status", "createdAt"]
+    },
+    "BillingAlert": {
+      "title": "BillingAlert",
+      "description": "Log entry of Firestore usage budget warning dispatched to super admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "usagePercent": { "type": "number" },
+        "estimatedCostUSD": { "type": "number" },
+        "budgetUSD": { "type": "number" },
+        "recipient": { "type": "string", "maxLength": 255 },
+        "status": { "type": "string", "enum": ["sent", "simulated", "failed"] },
+        "reason": { "type": "string", "maxLength": 500 }
+      },
+      "required": [
+        "timestamp",
+        "usagePercent",
+        "estimatedCostUSD",
+        "budgetUSD",
+        "recipient",
+        "status"
+      ]
     }
   },
   "firestore": {
@@ -198,6 +221,10 @@
     "/payments/{paymentId}": {
       "schema": "Payment",
       "description": "Server-written Razorpay payments"
+    },
+    "/billing_alerts/{alertId}": {
+      "schema": "BillingAlert",
+      "description": "Firestore billing budget alert records"
     }
   }
 }

@@ -12,7 +12,10 @@ async function getAdmin() {
   const app =
     getApps()[0] ??
     initializeApp({ credential: applicationDefault(), projectId: firebaseConfig.projectId });
-  return { adminAuth: getAuth(app), adminDb: getFirestore(app, firebaseConfig.firestoreDatabaseId) };
+  return {
+    adminAuth: getAuth(app),
+    adminDb: getFirestore(app, firebaseConfig.firestoreDatabaseId),
+  };
 }
 
 export type ProvisionProfileInput = {
@@ -26,7 +29,9 @@ export const provisionUserProfile = createServerFn({ method: "POST" })
     if (!input?.idToken) throw new Error("Authentication token is required");
     return {
       idToken: String(input.idToken),
-      fullName: String(input.fullName ?? "").trim().slice(0, 120),
+      fullName: String(input.fullName ?? "")
+        .trim()
+        .slice(0, 120),
       desiredRole: input.desiredRole === "teacher" ? "teacher" : "student",
     };
   })
@@ -39,13 +44,39 @@ export const provisionUserProfile = createServerFn({ method: "POST" })
 
     const result = await adminDb.runTransaction(async (tx) => {
       const [userSnap, configSnap] = await Promise.all([tx.get(userRef), tx.get(configRef)]);
+      const isAdminEmail = decoded.email === "aminpatwekar@gmail.com";
+
       if (userSnap.exists) {
-        return userSnap.data();
+        const existing = userSnap.data() || {};
+        const isCurrentAdmin = existing.role === "admin" || isAdminEmail;
+        const newRole = isCurrentAdmin ? "admin" : data.desiredRole || existing.role || "student";
+        const updatedProfile = {
+          ...existing,
+          name:
+            data.fullName ||
+            existing.name ||
+            decoded.name ||
+            decoded.email?.split("@")[0] ||
+            "User",
+          role: newRole,
+          email: decoded.email ?? existing.email ?? null,
+        };
+        tx.set(userRef, updatedProfile, { merge: true });
+        if (isAdminEmail) {
+          tx.set(
+            configRef,
+            {
+              superAdminUid: uid,
+            },
+            { merge: true },
+          );
+        }
+        return updatedProfile;
       }
 
       const config = configSnap.exists ? configSnap.data() : undefined;
-      const superAdminUid = config?.superAdminUid as string | undefined;
-      const role = superAdminUid ? data.desiredRole : "admin";
+      const superAdminUid = isAdminEmail ? uid : (config?.superAdminUid as string | undefined);
+      const role = isAdminEmail ? "admin" : superAdminUid ? data.desiredRole : "admin";
       const profile = {
         id: uid,
         name: data.fullName || decoded.name || decoded.email?.split("@")[0] || "User",
@@ -62,11 +93,15 @@ export const provisionUserProfile = createServerFn({ method: "POST" })
       };
 
       tx.set(userRef, profile);
-      if (!superAdminUid) {
-        tx.set(configRef, {
-          superAdminUid: uid,
-          initializedAt: new Date().toISOString(),
-        }, { merge: true });
+      if (!config?.superAdminUid || isAdminEmail) {
+        tx.set(
+          configRef,
+          {
+            superAdminUid: uid,
+            initializedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        );
       }
       return profile;
     });

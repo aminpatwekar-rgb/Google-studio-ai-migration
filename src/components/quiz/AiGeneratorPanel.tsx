@@ -43,7 +43,7 @@ export function AiGeneratorPanel({
   const fileRef = useRef<HTMLInputElement>(null);
   const [reading, setReading] = useState(false);
   const [sources, setSources] = useState<string[]>([]);
-  const [count, setCount] = useState(8);
+  const [count, setCount] = useState<number | string>(8);
   const [difficulty, setDifficulty] = useState<GenerationOptions["difficulty"]>("mixed");
   const [types, setTypes] = useState<QuestionType[]>(["mcq", "true_false", "short_answer"]);
   const [withExplanations, setWithExplanations] = useState(true);
@@ -153,10 +153,17 @@ export function AiGeneratorPanel({
           <Input
             id="gen-count"
             type="number"
-            min={1}
-            max={30}
+            placeholder="e.g. 10"
             value={count}
-            onChange={(e) => setCount(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === "") {
+                setCount("");
+              } else {
+                const num = parseInt(val, 10);
+                if (!isNaN(num)) setCount(num);
+              }
+            }}
           />
         </div>
         <div className="space-y-1.5">
@@ -214,7 +221,16 @@ export function AiGeneratorPanel({
       <Button
         type="button"
         disabled={!canGenerate}
-        onClick={() => onGenerate({ material, count, difficulty, types, withExplanations, topic })}
+        onClick={() =>
+          onGenerate({
+            material,
+            count: typeof count === "string" ? parseInt(count, 10) || 5 : count,
+            difficulty,
+            types,
+            withExplanations,
+            topic,
+          })
+        }
         className="w-full"
       >
         {busy ? (

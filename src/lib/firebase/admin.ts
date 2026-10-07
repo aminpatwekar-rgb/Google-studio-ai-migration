@@ -1,24 +1,20 @@
-// SERVER-ONLY. Never import this from client components/hooks.
-// Only import it from createServerFn handlers or middleware .server() callbacks.
-import { getApps, initializeApp, applicationDefault } from "firebase-admin/app";
-import { getAuth as getAdminAuthSdk } from "firebase-admin/auth";
-import { getFirestore as getAdminFirestoreSdk } from "firebase-admin/firestore";
+import { getApps, initializeApp, applicationDefault, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 import firebaseConfig from "../../../firebase-applet-config.json";
 
-function getAdminApp() {
-  return getApps()[0] ?? initializeApp({ credential: applicationDefault(), projectId: firebaseConfig.projectId });
-}
+const apps = getApps();
+const adminApp = apps.length > 0
+  ? apps[0]
+  : initializeApp({
+      credential: applicationDefault(),
+      projectId: firebaseConfig.projectId,
+    });
 
-function lazy<T extends object>(factory: () => T): T {
-  let instance: T | undefined;
-  return new Proxy({} as T, {
-    get(_t, prop) {
-      instance ??= factory();
-      const value = Reflect.get(instance as object, prop);
-      return typeof value === "function" ? value.bind(instance) : value;
-    },
-  });
-}
+export const adminAuth = getAuth(adminApp);
+export const adminDb = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
 
-export const adminAuth = /* @__PURE__ */ lazy(() => getAdminAuthSdk(getAdminApp()));
-export const adminDb = /* @__PURE__ */ lazy(() => getAdminFirestoreSdk(getAdminApp(), firebaseConfig.firestoreDatabaseId));
+console.log("Admin SDK initialized with project:", adminApp.options.projectId);
+console.log("Admin SDK database ID:", firebaseConfig.firestoreDatabaseId);
+// Test connection lazily or do not test to avoid blocking initialization.
+console.log("Admin SDK initialized.");

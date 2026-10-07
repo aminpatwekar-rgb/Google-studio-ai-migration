@@ -21,8 +21,8 @@ export function RolePreferencesCard() {
   const { effectiveRole } = useViewRole();
 
   // NOTE: Persistence uses local state because there is no dedicated
-  // 'user_preferences' table or column on profiles for custom study/grading defaults.
-  // When a user_preferences table is provisioned, save these defaults to Supabase.
+  // 'user_preferences' collection or column on profiles for custom study/grading defaults.
+  // When a user_preferences collection is provisioned, save these defaults to Firestore.
 
   // Student states
   const [reminderLeadTime, setReminderLeadTime] = useState("1_day");

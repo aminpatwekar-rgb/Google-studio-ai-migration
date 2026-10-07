@@ -2,7 +2,9 @@ import { getQuiz, getClass, getSubmissionsByRef, getUserProfile } from "@/lib/fi
 import { percent, type QuestionType } from "@/lib/quiz/types";
 import type { Submission } from "@/lib/firebase/models";
 
-type SubmissionWithResults = Submission & { resultDetails?: Record<string, { answer?: string; correct?: boolean; marks?: number }> };
+type SubmissionWithResults = Submission & {
+  resultDetails?: Record<string, { answer?: string; correct?: boolean; marks?: number }>;
+};
 
 export type StudentStat = {
   studentId: string;
@@ -104,7 +106,12 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
 
   const students: StudentStat[] = studentIds.map((id) => {
     const studentSubs = submissions.filter((s) => s.studentId === id);
-    const latestSub = studentSubs.slice().sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
+    const latestSub =
+      studentSubs
+        .slice()
+        .sort((a, b) =>
+          String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")),
+        )[0] || null;
 
     if (!latestSub) {
       return {
@@ -154,7 +161,9 @@ export async function fetchQuizAnalytics(quizId: string): Promise<QuizAnalytics>
 
     for (const submission of submissions) {
       const details = (submission as SubmissionWithResults).resultDetails?.[id];
-      const answer = String((submission.answers as Record<string, unknown> | undefined)?.[id] ?? "");
+      const answer = String(
+        (submission.answers as Record<string, unknown> | undefined)?.[id] ?? "",
+      );
       if (!answer.trim()) {
         unanswered += 1;
         continue;

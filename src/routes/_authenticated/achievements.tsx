@@ -46,13 +46,19 @@ function AchievementsPage() {
     );
   }
 
-  const { all, earnedMap, totalPoints } = data.data || { all: [], earnedMap: new Map(), totalPoints: 0 };
+  const { all, earnedMap, totalPoints } = data.data || {
+    all: [],
+    earnedMap: new Map(),
+    totalPoints: 0,
+  };
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border/60 pb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Achievements</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+            Achievements
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Earn badges and points by turning in assignments and completing quizzes.
           </p>

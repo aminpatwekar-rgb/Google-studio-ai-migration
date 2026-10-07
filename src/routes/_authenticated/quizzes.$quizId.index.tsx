@@ -10,18 +10,15 @@ import {
   Timer,
   Trash2,
   Users,
+  ShieldAlert,
+  Calendar,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useViewRole } from "@/lib/viewRole";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RenderMathText } from "@/components/math/RenderMathText";
-import {
-  getQuiz,
-  getClass,
-  getSubmissionsByRef,
-  deleteQuiz,
-} from "@/lib/firebase/firestore";
+import { getQuiz, getClass, getSubmissionsByRef, deleteQuiz } from "@/lib/firebase/firestore";
 
 export const Route = createFileRoute("/_authenticated/quizzes/$quizId/")({
   head: () => ({
@@ -43,7 +40,8 @@ function QuizDetailPage() {
   const qc = useQueryClient();
 
   const quizData = useQuery({
-    queryKey: ["quiz-detail", quizId, isTeacher],
+    queryKey: ["quiz-detail", quizId, isTeacher, user?.id],
+    enabled: Boolean(user?.id && quizId),
     queryFn: async () => {
       const res = await getQuiz(quizId, isTeacher);
       if (!res) throw new Error("Quiz not found");
@@ -53,7 +51,8 @@ function QuizDetailPage() {
   });
 
   const submissions = useQuery({
-    queryKey: ["quiz-submissions", quizId],
+    queryKey: ["quiz-submissions", quizId, user?.id],
+    enabled: Boolean(user?.id && quizId),
     queryFn: async () => {
       return await getSubmissionsByRef(quizId);
     },
@@ -99,20 +98,77 @@ function QuizDetailPage() {
       </div>
 
       <header className="panel p-6 bg-card border-border flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <span className="text-xs font-semibold text-primary uppercase tracking-wider">{className}</span>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl mt-1">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-primary uppercase tracking-wider">
+              {className}
+            </span>
+            <span className="text-muted-foreground">•</span>
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
+                quiz.kind === "exam"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : quiz.kind === "scheduled"
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    : quiz.kind === "timed"
+                      ? "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              }`}
+            >
+              {quiz.kind === "exam" && <ShieldAlert className="size-3" />}
+              {quiz.kind === "scheduled" && <Calendar className="size-3" />}
+              {quiz.kind === "timed" && <Timer className="size-3" />}
+              {(!quiz.kind || quiz.kind === "practice") && <CheckCircle2 className="size-3" />}
+              {quiz.kind === "exam"
+                ? "Final Exam (Strict Lockdown)"
+                : quiz.kind === "scheduled"
+                  ? "Scheduled Quiz"
+                  : quiz.kind === "timed"
+                    ? "Timed Quiz"
+                    : "Practice Quiz"}
+            </span>
+          </div>
+
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
             {quiz.title}
           </h1>
-          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2">
-            <span className="flex items-center gap-1">
-              <Timer className="size-3.5" /> {quiz.timeLimit || 20} minutes
-            </span>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground pt-0.5">
+            {quiz.kind !== "practice" && (
+              <span className="flex items-center gap-1 font-mono">
+                <Timer className="size-3.5" /> {quiz.timeLimit || 20} minutes
+              </span>
+            )}
+            {quiz.kind === "practice" && (
+              <span className="flex items-center gap-1">
+                <CheckCircle2 className="size-3.5 text-emerald-500" /> Untimed Practice
+              </span>
+            )}
             <span>•</span>
             <span>{(quiz.questions || []).length} questions</span>
             <span>•</span>
             <span>{totalPoints} total points</span>
+
+            {quiz.scheduledStart && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <Calendar className="size-3.5 text-amber-500" /> Starts:{" "}
+                  {new Date(quiz.scheduledStart).toLocaleString()}
+                </span>
+              </>
+            )}
           </div>
+
+          {quiz.kind === "exam" && (
+            <div className="mt-2 text-xs text-destructive flex items-center gap-1.5 font-medium">
+              <ShieldAlert className="size-3.5" />
+              <span>
+                Tab switching is strictly locked down. Leaving this tab during the exam triggers
+                immediate auto-submit.
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -161,15 +217,26 @@ function QuizDetailPage() {
           {(quiz.questions || []).map((q, idx) => (
             <div key={q.id || idx} className="panel p-5 bg-card border-border space-y-3">
               <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-2">
-                  <span className="font-mono text-xs font-bold text-muted-foreground bg-secondary px-2 py-0.5 rounded">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <span className="font-mono text-xs font-bold text-muted-foreground bg-secondary px-2.5 py-1 rounded shrink-0">
                     Q{idx + 1}
                   </span>
-                  <div className="text-sm font-medium text-foreground">
-                    <RenderMathText text={q.text} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-foreground break-words leading-relaxed">
+                      <RenderMathText text={q.text} />
+                    </div>
+                    {q.imageUrl && (
+                      <div className="mt-2.5 max-w-md overflow-hidden rounded-lg border border-border/60 bg-secondary/10 p-1">
+                        <img
+                          src={q.imageUrl}
+                          alt={`Question ${idx + 1} diagram`}
+                          className="max-h-64 w-auto rounded object-contain"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
-                <span className="text-xs font-semibold text-muted-foreground shrink-0">
+                <span className="text-xs font-semibold text-muted-foreground shrink-0 pt-0.5">
                   {q.points || 10} pts
                 </span>
               </div>
@@ -221,7 +288,9 @@ function QuizDetailPage() {
               {subs.map((s) => (
                 <div key={s.id} className="p-4 flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-foreground">{s.studentName || "Student"}</p>
+                    <p className="text-sm font-medium text-foreground">
+                      {s.studentName || "Student"}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       Submitted on {new Date(s.submittedAt).toLocaleString()}
                     </p>
