@@ -376,12 +376,18 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
   const batchSize = 500;
   for (let start = 0; start < snap.docs.length; start += batchSize) {
     const batch = writeBatch(db);
+    let updates = 0;
+
     for (const notification of snap.docs.slice(start, start + batchSize)) {
       if (notification.data().read !== true) {
         batch.update(notification.ref, { read: true });
+        updates += 1;
       }
     }
-    await batch.commit();
+
+    if (updates > 0) {
+      await batch.commit();
+    }
   }
 }
 
