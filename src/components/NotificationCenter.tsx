@@ -29,7 +29,14 @@ export function NotificationCenter() {
 
   const allRead = useMutation({
     mutationFn: () => markAllNotificationsRead(user!.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications", user?.id] }),
+    onSuccess: () => {
+      // Update the visible list immediately, then confirm the persisted state.
+      qc.setQueryData(
+        ["notifications", user?.id],
+        (current: typeof q.data) => current?.map((n) => ({ ...n, read: true })) ?? [],
+      );
+      qc.invalidateQueries({ queryKey: ["notifications", user?.id] });
+    },
   });
 
   const unread = (q.data ?? []).filter((n) => !n.read).length;
@@ -58,8 +65,10 @@ export function NotificationCenter() {
               size="sm"
               className="h-7 text-xs"
               onClick={() => allRead.mutate()}
+              disabled={allRead.isPending}
             >
-              <Check className="size-3 mr-1" /> Mark all read
+              <Check className="size-3 mr-1" />
+              {allRead.isPending ? "Marking..." : "Mark all read"}
             </Button>
           )}
         </div>
