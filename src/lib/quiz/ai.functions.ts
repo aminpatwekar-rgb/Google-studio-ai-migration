@@ -177,11 +177,11 @@ async function callAI(input: GenerateInput): Promise<GeneratedQuestion[]> {
   try {
     let response;
     try {
-      response = await runModel("gemini-2.5-flash");
+      response = await runModel("gemini-3.8-flash");
     } catch (err: any) {
       if (err.status === 503 || err.message?.includes("UNAVAILABLE")) {
-        console.warn("gemini-2.5-flash unavailable, falling back to gemini-flash-latest");
-        response = await runModel("gemini-flash-latest");
+        console.warn("gemini-3.8-flash unavailable, falling back to gemini-3.5-flash-lite");
+        response = await runModel("gemini-3.5-flash-lite");
       } else {
         throw err;
       }
