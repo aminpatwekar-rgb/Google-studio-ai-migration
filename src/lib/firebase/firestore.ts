@@ -12,6 +12,7 @@ import {
   limit,
   arrayUnion,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "./config";
 import type {
@@ -335,7 +336,13 @@ export function exportClassRosterCsv(roster: UserProfile[]): string {
 
 export async function createNotification(input: Omit<OnyxNotification, "id">): Promise<string> {
   const ref = doc(collection(db, "notifications"));
-  await setDoc(ref, { ...input, id: ref.id });
+  const notification = cleanFirestoreData({
+    ...input,
+    id: ref.id,
+    // Always persist an explicit boolean so unread notifications can be queried reliably.
+    read: input.read ?? false,
+  });
+  await setDoc(ref, notification);
   return ref.id;
 }
 
@@ -358,15 +365,24 @@ export async function markNotificationRead(notificationId: string): Promise<void
 }
 
 export async function markAllNotificationsRead(userId: string): Promise<void> {
+  // Do not filter on read == false here. Older notification documents may not have
+  // a read field at all, while the UI correctly treats those as unread.
   const snap = await getDocs(
-    query(
-      collection(db, "notifications"),
-      where("userId", "==", userId),
-      where("read", "==", false),
-    ),
+    query(collection(db, "notifications"), where("userId", "==", userId)),
   );
   if (snap.empty) return;
-  await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { read: true })));
+
+  // Firestore batches are limited to 500 writes, so commit in chunks.
+  const batchSize = 500;
+  for (let start = 0; start < snap.docs.length; start += batchSize) {
+    const batch = writeBatch(db);
+    for (const notification of snap.docs.slice(start, start + batchSize)) {
+      if (notification.data().read !== true) {
+        batch.update(notification.ref, { read: true });
+      }
+    }
+    await batch.commit();
+  }
 }
 
 // ================= ASSIGNMENTS =================
